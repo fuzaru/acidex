@@ -1,27 +1,27 @@
 import { getCurrentUserSafe, supabase } from "@/lib/supabase";
 import { maybeEnrichAnalysisRecordWithLlm } from "@/src/services/aiAnalysisService";
 import {
-    buildRuleBasedNarrative,
-    classifyRiskLevel,
+  buildRuleBasedNarrative,
+  classifyRiskLevel,
 } from "@/src/services/analysisService";
-import { readSensorData } from "@/src/services/sensorService";
 import {
-    applyDeviceSideCalibrationFromVoltages,
-    measureCalibrationBuffer,
+  applyDeviceSideCalibrationFromVoltages,
+  measureCalibrationBuffer,
 } from "@/src/services/calibrationService";
 import { schedulePostCoffeeReminder } from "@/src/services/reminderService";
+import { readSensorData } from "@/src/services/sensorService";
 import type {
-    ArduinoReadProgress,
-    ArduinoReadStage,
+  ArduinoReadProgress,
+  ArduinoReadStage,
 } from "@/src/services/usbService";
 import {
-    describeUsbDevice,
-    getFirstUsbDevice,
-    hasUsbDevice,
-    listUsbDevices,
-    requestUsbPermissionIfNeeded,
+  describeUsbDevice,
+  getFirstUsbDevice,
+  hasUsbDevice,
+  listUsbDevices,
+  requestUsbPermissionIfNeeded,
 } from "@/src/services/usbService";
-import { saveAnalysisRecord } from "@/src/store/analysisStore";
+import { getStoredAnalysisHistory, saveAnalysisRecord } from "@/src/store/analysisStore";
 import type { AnalysisRecord } from "@/src/types/analysis";
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -29,19 +29,19 @@ import { Image } from "expo-image";
 import { useRouter } from "expo-router";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Animated,
-    Dimensions,
-    Easing,
-    FlatList,
-    Modal,
-    NativeScrollEvent,
-    NativeSyntheticEvent,
-    Pressable,
-    StyleSheet,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Animated,
+  Dimensions,
+  Easing,
+  FlatList,
+  Modal,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  Pressable,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
 import { ThemedText } from "@/components/themed-text";
@@ -199,6 +199,7 @@ export default function HomeScreen() {
   const [facts, setFacts] = useState<FactType[]>(factsData);
   const [selectedFact, setSelectedFact] = useState<FactType | null>(null);
   const [calibrationHelpVisible, setCalibrationHelpVisible] = useState(false);
+  const [todayCount, setTodayCount] = useState(0);
   const [cupsTodayInput, setCupsTodayInput] = useState("1");
   const [calibrationBusy, setCalibrationBusy] = useState(false);
   const [calibrationLowVoltage, setCalibrationLowVoltage] = useState<number | null>(null);
@@ -388,8 +389,11 @@ export default function HomeScreen() {
   };
 
   const getTodayString = () => {
-    const now = new Date();
-    return `${now.getFullYear()}-${`${now.getMonth() + 1}`.padStart(2, "0")}-${`${now.getDate()}`.padStart(2, "0")}`;
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
   };
 
   const incrementStreakIfNeeded = async () => {
@@ -430,14 +434,25 @@ export default function HomeScreen() {
       console.log("No USB serial device was detected before analyze.");
     }
 
+    const history = await getStoredAnalysisHistory();
+    const today = getTodayString();
+    
+    const count = history.filter(r => {
+      const d = new Date(r.createdAt);
+      const localDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      return localDate === today && r.isNewCup;
+    }).length;
+
+    setTodayCount(count);
+    setCupsTodayInput(String(count + 1));
+    setIsNewCup(true);
+
     setAnalyzeModalVisible(true);
     setAnalyzeError(null);
     setAnalyzeStage(null);
     lastAnalyzeStageRef.current = null;
     setPendingRecord(null);
     setSerialDebugLines([]);
-    setCupsTodayInput("1");
-    setIsNewCup(true);
 
     if (!hasOtg) {
       setAnalyzeStatus("no-device");
@@ -498,7 +513,7 @@ export default function HomeScreen() {
       return;
     }
 
-    const nextRiskLevel = classifyRiskLevel(pendingRecord.classification, stomachState);
+    const nextRiskLevel = classifyRiskLevel(pendingRecord.binaryLabel || "Non-Acidic", stomachState);
     const nextRecord: AnalysisRecord = {
       ...pendingRecord,
       stomachState,
@@ -1059,19 +1074,28 @@ export default function HomeScreen() {
                       })}
                     </View>
                     <View style={styles.newCupRow}>
-                      <ThemedText style={styles.newCupLabel}>new cup?</ThemedText>
+                      <View style={styles.newCupLabelGroup}>
+                        <Ionicons name="cafe-outline" size={14} color="#8B5E3C" />
+                        <ThemedText style={styles.newCupLabel}>new cup?</ThemedText>
+                      </View>
                       <View style={styles.newCupOptions}>
                         <TouchableOpacity
                           activeOpacity={0.8}
                           style={[styles.newCupOption, isNewCup && { backgroundColor: coffee, borderColor: coffee }]}
-                          onPress={() => setIsNewCup(true)}
+                          onPress={() => {
+                            setIsNewCup(true);
+                            setCupsTodayInput(String(todayCount + 1));
+                          }}
                         >
                           <ThemedText style={[styles.newCupOptionText, isNewCup && { color: "#FFF" }]}>yes</ThemedText>
                         </TouchableOpacity>
                         <TouchableOpacity
                           activeOpacity={0.8}
                           style={[styles.newCupOption, !isNewCup && { backgroundColor: coffee, borderColor: coffee }]}
-                          onPress={() => setIsNewCup(false)}
+                          onPress={() => {
+                            setIsNewCup(false);
+                            setCupsTodayInput(String(Math.max(1, todayCount)));
+                          }}
                         >
                           <ThemedText style={[styles.newCupOptionText, !isNewCup && { color: "#FFF" }]}>no</ThemedText>
                         </TouchableOpacity>
@@ -1437,6 +1461,11 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     gap: 10,
   },
+  newCupLabelGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
   newCupLabel: {
     fontSize: 12,
     color: "#3C2C24",
@@ -1580,4 +1609,3 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
 });
-

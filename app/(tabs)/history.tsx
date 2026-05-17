@@ -5,15 +5,21 @@ import { useThemeColor } from "@/hooks/use-theme-color";
 import { BookmarkStore } from "@/src/data/bookmarkStore";
 import { CollectionStore } from "@/src/data/collectionStore";
 import { syncHistoryRecordToSupabase } from "@/src/services/historySync";
-import { deleteAnalysisRecord, getStoredAnalysisHistory, saveAnalysisRecord } from "@/src/store/analysisStore";
+import {
+  deleteAnalysisRecord,
+  getLastExpandedHistoryId,
+  getStoredAnalysisHistory,
+  saveAnalysisRecord,
+  setLastExpandedHistoryId
+} from "@/src/store/analysisStore";
 import { AnalysisRecord } from "@/src/types/analysis";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-<<<<<<< HEAD
-  Alert,
+  Animated,
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -21,19 +27,7 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  View,
-=======
-  Animated,
-    Modal,
-    Pressable,
-    ScrollView,
-    Share,
-  Easing,
-    StyleSheet,
-    TextInput,
-    TouchableOpacity,
-    View,
->>>>>>> my-updates
+  View
 } from "react-native";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -169,10 +163,14 @@ export default function HistoryScreen() {
   const hasAppliedRouteFilter = useRef(false);
   const coffee = useThemeColor({}, "coffee");
   const [records,        setRecords]        = useState<AnalysisRecord[]>([]);
+  const [selectedIds,    setSelectedIds]    = useState<Set<string>>(new Set());
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
+  const multiSelectOpacity = useRef(new Animated.Value(0)).current;
+  const deleteButtonScale = useRef(new Animated.Value(1)).current;
 
   const [search,         setSearch]         = useState("");
   const [selectedFilter, setSelectedFilter] = useState("All");
-  const [expandedId,     setExpandedId]     = useState<string | null>(null);
+  const [expandedId,     setExpandedId]     = useState<string | null>(getLastExpandedHistoryId());
   const [renameModalVisible, setRenameModalVisible] = useState(false);
   const [renameText, setRenameText] = useState("");
   const [renameTarget, setRenameTarget] = useState<AnalysisRecord | null>(null);
@@ -187,6 +185,11 @@ export default function HistoryScreen() {
   const [toastVisible, setToastVisible] = useState(false);
   const [toastType, setToastType] = useState<ToastType>("bookmark");
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSetExpanded = (id: string | null) => {
+    setExpandedId(id);
+    setLastExpandedHistoryId(id);
+  };
   
   const loadRecords = React.useCallback(async () => {
     const stored = await getStoredAnalysisHistory();
@@ -194,7 +197,13 @@ export default function HistoryScreen() {
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     );
     setRecords(sorted);
-    setExpandedId((current) => current ?? sorted[0]?.id ?? null);
+
+    const lastId = getLastExpandedHistoryId();
+    if (lastId) {
+      setExpandedId(lastId);
+    } else if (sorted.length > 0) {
+      handleSetExpanded(sorted[0].id);
+    }
   }, []);
 
   const showToast = (type: ToastType) => {
@@ -295,7 +304,7 @@ export default function HistoryScreen() {
     await saveAnalysisRecord(nextRecord);
     setRecords((current) => current.map((item) => (item.id === nextRecord.id ? nextRecord : item)));
     if (expandedId === nextRecord.id) {
-      setExpandedId(nextRecord.id);
+      handleSetExpanded(nextRecord.id);
     }
     closeRenameModal();
   };
@@ -324,7 +333,6 @@ export default function HistoryScreen() {
   const confirmDeleteRecord = async () => {
     if (deleteModalKind === "collection") {
       if (!deleteCollectionTarget) return;
-      console.log("delete collection pressed:", { collection: deleteCollectionTarget });
       await CollectionStore.removeCollection(deleteCollectionTarget);
       if (selectedFilter === `Collection: ${deleteCollectionTarget}`) {
         setSelectedFilter("All");
@@ -336,16 +344,20 @@ export default function HistoryScreen() {
 
     if (!deleteTarget) return;
 
-    console.log("delete pressed:", { id: deleteTarget.id, is_deleted: true });
-    await deleteAnalysisRecord(deleteTarget.id);
-    await CollectionStore.removeRecordFromAll(deleteTarget.id);
-    BookmarkStore.remove(deleteTarget.id);
-    setRecords((current) => current.filter((record) => record.id !== deleteTarget.id));
+    const targetId = deleteTarget.id;
+
+    // 1. Instant UI update (Optimistic)
+    setRecords((current) => current.filter((record) => record.id !== targetId));
     if (expandedId === deleteTarget.id) {
-      setExpandedId(null);
+      handleSetExpanded(null);
     }
-    showToast("delete");
     cancelDeleteRecord();
+    showToast("delete");
+
+    // 2. Persistent background deletion (non-blocking)
+    deleteAnalysisRecord(targetId).catch(err => console.log("Background delete error:", err));
+    CollectionStore.removeRecordFromAll(targetId);
+    BookmarkStore.remove(targetId);
   };
 
   const openCollectionModal = (item: AnalysisRecord) => {
@@ -369,6 +381,67 @@ export default function HistoryScreen() {
     showToast("collection");
   };
 
+  const toggleSelectMode = () => {
+    setIsMultiSelectMode(true);
+    setSelectedIds(new Set());
+    Animated.timing(multiSelectOpacity, {
+      toValue: 1,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const exitSelectMode = () => {
+    Animated.timing(multiSelectOpacity, {
+      toValue: 0,
+      duration: 150,
+      useNativeDriver: true,
+    }).start(() => {
+      setIsMultiSelectMode(false);
+      setSelectedIds(new Set());
+    });
+  };
+
+  const toggleSelectRecord = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+        Animated.sequence([
+          Animated.timing(deleteButtonScale, { toValue: 1.1, duration: 80, useNativeDriver: true }),
+          Animated.timing(deleteButtonScale, { toValue: 1, duration: 80, useNativeDriver: true }),
+        ]).start();
+      }
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelectedIds(new Set(filteredRecords.map(r => r.id)));
+  };
+
+  const deselectAll = () => {
+    setSelectedIds(new Set());
+  };
+
+  const deleteSelectedRecords = async () => {
+    const idsToDelete = Array.from(selectedIds);
+
+    // 1. Instant UI update
+    setRecords(current => current.filter(record => !selectedIds.has(record.id)));
+    exitSelectMode();
+    showToast("delete");
+
+    // 2. Background batch deletion
+    idsToDelete.forEach(id => {
+      deleteAnalysisRecord(id).catch(err => console.log("Background multi-delete error:", err));
+      CollectionStore.removeRecordFromAll(id);
+      BookmarkStore.remove(id);
+    });
+  };
+
   return (
     <ThemedView style={s.screen}>
       <ScrollView
@@ -379,6 +452,11 @@ export default function HistoryScreen() {
         {/* ── Header (unchanged) ── */}
         <ThemedView style={[s.header, { backgroundColor: Colors.light.background }]}>
           <View style={s.headerMiddle}>
+            <Image
+              source={require("../../assets/images/icon.png")}
+              style={s.headerLogo}
+              resizeMode="contain"
+            />
             <ThemedText style={[s.title, { color: coffee }]}>history.</ThemedText>
             <ThemedText style={s.subtitle}>your full analysis log</ThemedText>
           </View>
@@ -440,7 +518,40 @@ export default function HistoryScreen() {
             <ThemedText style={s.countText}>
               {filteredRecords.length} record{filteredRecords.length !== 1 ? "s" : ""}
             </ThemedText>
+            {!isMultiSelectMode && (
+              <TouchableOpacity onPress={toggleSelectMode} style={s.selectIconButton}>
+                <Ionicons name="checkbox-outline" size={18} color="#4A3728" />
+              </TouchableOpacity>
+            )}
           </View>
+        )}
+
+        {/* ── Multi-select header ── */}
+        {isMultiSelectMode && (
+          <Animated.View style={[s.multiSelectHeader, { opacity: multiSelectOpacity }]}>
+            <TouchableOpacity onPress={exitSelectMode}>
+              <ThemedText style={s.multiSelectCancel}>cancel</ThemedText>
+            </TouchableOpacity>
+            <View style={s.multiSelectActions}>
+              <ThemedText style={s.multiSelectCount}>{selectedIds.size} selected</ThemedText>
+              {selectedIds.size === filteredRecords.length && filteredRecords.length > 0 ? (
+                <TouchableOpacity onPress={deselectAll}>
+                  <ThemedText style={s.multiSelectAction}>deselect all</ThemedText>
+                </TouchableOpacity>
+              ) : (
+                <TouchableOpacity onPress={selectAll}>
+                  <ThemedText style={s.multiSelectAction}>select all</ThemedText>
+                </TouchableOpacity>
+              )}
+              {selectedIds.size > 0 && (
+                <Animated.View style={{ transform: [{ scale: deleteButtonScale }] }}>
+                  <TouchableOpacity onPress={deleteSelectedRecords} style={s.deleteButton}>
+                    <Ionicons name="trash-outline" size={18} color="#FFF" />
+                  </TouchableOpacity>
+                </Animated.View>
+              )}
+            </View>
+          </Animated.View>
         )}
 
         {/* ── List ── */}
@@ -449,11 +560,33 @@ export default function HistoryScreen() {
             <ThemedText style={s.emptyText}>No analysis records found.</ThemedText>
           </View>
         ) : (
-          filteredRecords.map((item) =>
-            expandedId === item.id
-              ? <ExpandedCard key={item.id} item={item} onCollapse={() => setExpandedId(null)} onRename={() => openRenameModal(item)} onDelete={() => deleteRecord(item)} onAddToCollection={() => openCollectionModal(item)} onOpenResult={() => router.push({ pathname: "/(tabs)/results", params: { recordId: item.id } })} onBookmarkToast={() => showToast("bookmark")} />
-              : <CollapsedCard key={item.id} item={item} onExpand={() => setExpandedId(item.id)} onDelete={() => deleteRecord(item)} onAddToCollection={() => openCollectionModal(item)} onOpenResult={() => router.push({ pathname: "/(tabs)/results", params: { recordId: item.id } })} onBookmarkToast={() => showToast("bookmark")} />
-          )
+          filteredRecords.map((item) => {
+            const isSelected = selectedIds.has(item.id);
+            return expandedId === item.id
+              ? <ExpandedCard
+                  key={item.id}
+                  item={item}
+                  isSelected={isSelected}
+                  onSelect={isMultiSelectMode ? () => toggleSelectRecord(item.id) : undefined}
+                  onCollapse={() => handleSetExpanded(null)}
+                  onRename={() => openRenameModal(item)}
+                  onDelete={() => deleteRecord(item)}
+                  onAddToCollection={() => openCollectionModal(item)}
+                  onOpenResult={() => router.push({ pathname: "/(tabs)/results", params: { recordId: item.id } })}
+                  onBookmarkToast={() => showToast("bookmark")}
+                />
+              : <CollapsedCard
+                  key={item.id}
+                  item={item}
+                  isSelected={isSelected}
+                  onSelect={isMultiSelectMode ? () => toggleSelectRecord(item.id) : undefined}
+                  onExpand={() => handleSetExpanded(item.id)}
+                  onDelete={() => deleteRecord(item)}
+                  onAddToCollection={() => openCollectionModal(item)}
+                  onOpenResult={() => router.push({ pathname: "/(tabs)/results", params: { recordId: item.id } })}
+                  onBookmarkToast={() => showToast("bookmark")}
+                />;
+          })
         )}
       </ScrollView>
 
@@ -574,10 +707,15 @@ export default function HistoryScreen() {
               {Object.keys(collections).map((name) => {
                 const selected = collectionTarget ? (collections[name] ?? []).includes(collectionTarget.id) : false;
                 return (
-                  <TouchableOpacity key={name} style={s.collectionRow} onPress={() => void toggleCollectionMembership(name)} activeOpacity={0.8}>
-                    <ThemedText style={s.collectionName}>{name}</ThemedText>
-                    <Ionicons name={selected ? "checkmark-circle" : "ellipse-outline"} size={18} color={selected ? "#4A3728" : "#A08880"} />
-                  </TouchableOpacity>
+                  <View key={name} style={s.collectionRow}>
+                    <TouchableOpacity style={s.collectionRowMain} onPress={() => void toggleCollectionMembership(name)} activeOpacity={0.8}>
+                      <ThemedText style={s.collectionName}>{name}</ThemedText>
+                      <Ionicons name={selected ? "checkmark-circle" : "ellipse-outline"} size={18} color={selected ? "#4A3728" : "#A08880"} />
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => deleteCollection(name)} style={s.collectionDeleteBtn}>
+                      <Ionicons name="trash-outline" size={16} color="#B56B5B" />
+                    </TouchableOpacity>
+                  </View>
                 );
               })}
             </ScrollView>
@@ -590,7 +728,7 @@ export default function HistoryScreen() {
 
 // ─── Collapsed Card ───────────────────────────────────────────────────────────
 
-function CollapsedCard({ item, onExpand, onDelete, onAddToCollection, onOpenResult, onBookmarkToast }: { item: AnalysisRecord; onExpand: () => void; onDelete: () => void; onAddToCollection: () => void; onOpenResult: () => void; onBookmarkToast: () => void }) {
+function CollapsedCard({ item, onExpand, onDelete, onAddToCollection, onOpenResult, onBookmarkToast, isSelected, onSelect }: { item: AnalysisRecord; onExpand: () => void; onDelete: () => void; onAddToCollection: () => void; onOpenResult: () => void; onBookmarkToast: () => void; isSelected?: boolean; onSelect?: () => void }) {
   const cls  = CLASSIFICATION_COLORS[item.classification] ?? CLASSIFICATION_COLORS["Moderate"];
   const risk = RISK_COLORS[item.riskLevel ?? "Low Risk"]  ?? RISK_COLORS["Low Risk"];
 
@@ -617,25 +755,32 @@ function CollapsedCard({ item, onExpand, onDelete, onAddToCollection, onOpenResu
   };
 
   return (
-    <TouchableOpacity activeOpacity={0.85} style={s.card} onPress={onOpenResult}>
-      {/* date + chevron */}
-      <View style={s.cardTopRow}>
-        <ThemedText style={s.cardDate}>{formatCardDate(item.createdAt)}</ThemedText>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <TouchableOpacity onPress={onAddToCollection} activeOpacity={0.7}>
-            <Ionicons name="add-circle-outline" size={16} color="#8B6A55" />
+    <Animated.View style={{ transform: [{ scale: isSelected ? 0.98 : 1 }] }}>
+      <TouchableOpacity activeOpacity={0.85} style={[s.card, isSelected && s.cardSelected]} onPress={onSelect || onExpand}>
+        {/* selection checkbox */}
+        {onSelect && (
+          <TouchableOpacity style={s.selectCheckbox} onPress={onSelect}>
+            <Ionicons name={isSelected ? "checkbox" : "square-outline"} size={22} color={isSelected ? "#4A3728" : "#A08880"} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={onDelete} activeOpacity={0.7}>
-            <Ionicons name="trash-outline" size={16} color="#B56B5B" />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleBookmarkToggle} activeOpacity={0.7}>
-            <Ionicons name={isBookmarked ? 'bookmark' : 'bookmark-outline'} size={16} color={isBookmarked ? '#4A3728' : '#C4A882'} />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={onExpand} activeOpacity={0.7}>
-            <Ionicons name="chevron-down" size={16} color="#C4A882" />
-          </TouchableOpacity>
+        )}
+        {/* date + chevron */}
+        <View style={[s.cardTopRow, onSelect && s.cardTopRowPadded]}>
+          <ThemedText style={s.cardDate}>{formatCardDate(item.createdAt)}</ThemedText>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <TouchableOpacity onPress={onAddToCollection} activeOpacity={0.7}>
+              <Ionicons name="add-circle-outline" size={16} color="#8B6A55" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={onDelete} activeOpacity={0.7}>
+              <Ionicons name="trash-outline" size={16} color="#B56B5B" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleBookmarkToggle} activeOpacity={0.7}>
+              <Ionicons name={isBookmarked ? 'bookmark' : 'bookmark-outline'} size={16} color={isBookmarked ? '#4A3728' : '#C4A882'} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={onExpand} activeOpacity={0.7}>
+              <Ionicons name="chevron-down" size={16} color="#C4A882" />
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
 
       {/* icon + info */}
       <View style={s.cardBody}>
@@ -668,6 +813,7 @@ function CollapsedCard({ item, onExpand, onDelete, onAddToCollection, onOpenResu
         </View>
       </View>
     </TouchableOpacity>
+    </Animated.View>
   );
 }
 
@@ -681,6 +827,8 @@ function ExpandedCard({
   onAddToCollection,
   onOpenResult,
   onBookmarkToast,
+  isSelected,
+  onSelect,
 }: {
   item: AnalysisRecord;
   onCollapse: () => void;
@@ -689,6 +837,8 @@ function ExpandedCard({
   onAddToCollection: () => void;
   onOpenResult: () => void;
   onBookmarkToast: () => void;
+  isSelected?: boolean;
+  onSelect?: () => void;
 }) {
   const cls  = CLASSIFICATION_COLORS[item.classification] ?? CLASSIFICATION_COLORS["Moderate"];
   const risk = RISK_COLORS[item.riskLevel ?? "Low Risk"]  ?? RISK_COLORS["Low Risk"];
@@ -716,27 +866,33 @@ function ExpandedCard({
   };
 
   return (
-    <TouchableOpacity activeOpacity={0.92} onPress={onCollapse} style={s.expandedCard}>
-
-      {/* date + chevron */}
-      <View style={s.cardTopRow}>
-        <ThemedText style={s.expandedDate}>{formatDetailDate(item.createdAt)}</ThemedText>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <TouchableOpacity onPress={onAddToCollection} activeOpacity={0.7}>
-            <Ionicons name="add-circle-outline" size={16} color="#8B6A55" />
+    <Animated.View style={{ transform: [{ scale: isSelected ? 0.98 : 1 }] }}>
+      <TouchableOpacity activeOpacity={0.92} onPress={onSelect || onCollapse} style={[s.expandedCard, isSelected && s.cardSelected]}>
+        {/* selection checkbox */}
+        {onSelect && (
+          <TouchableOpacity style={s.selectCheckbox} onPress={onSelect}>
+            <Ionicons name={isSelected ? "checkbox" : "square-outline"} size={22} color={isSelected ? "#4A3728" : "#A08880"} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={onDelete} activeOpacity={0.7}>
-            <Ionicons name="trash-outline" size={16} color="#B56B5B" />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={onRename} activeOpacity={0.7}>
-            <Ionicons name="pencil" size={15} color="#C4A882" />
-          </TouchableOpacity>
-          <TouchableOpacity onPress={handleBookmarkToggle} activeOpacity={0.7}>
-            <Ionicons name={isBookmarked ? 'bookmark' : 'bookmark-outline'} size={16} color={isBookmarked ? '#4A3728' : '#C4A882'} />
-          </TouchableOpacity>
-          <Ionicons name="chevron-up" size={16} color="#C4A882" />
+        )}
+        {/* date + chevron */}
+        <View style={[s.cardTopRow, onSelect && s.cardTopRowPadded]}>
+          <ThemedText style={s.expandedDate}>{formatDetailDate(item.createdAt)}</ThemedText>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <TouchableOpacity onPress={onAddToCollection} activeOpacity={0.7}>
+              <Ionicons name="add-circle-outline" size={16} color="#8B6A55" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={onDelete} activeOpacity={0.7}>
+              <Ionicons name="trash-outline" size={16} color="#B56B5B" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={onRename} activeOpacity={0.7}>
+              <Ionicons name="pencil" size={15} color="#C4A882" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleBookmarkToggle} activeOpacity={0.7}>
+              <Ionicons name={isBookmarked ? 'bookmark' : 'bookmark-outline'} size={16} color={isBookmarked ? '#4A3728' : '#C4A882'} />
+            </TouchableOpacity>
+            <Ionicons name="chevron-up" size={16} color="#C4A882" />
+          </View>
         </View>
-      </View>
 
       {/* main info block */}
       <View style={s.expandedMain}>
@@ -803,6 +959,7 @@ function ExpandedCard({
       </TouchableOpacity>
 
     </TouchableOpacity>
+    </Animated.View>
   );
 }
 
@@ -819,6 +976,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 16, paddingTop: 50, paddingBottom: 14,
   },
   headerMiddle: { flex: 1.6, alignItems: "center", justifyContent: "center" },
+  headerLogo:   { width: 22, height: 22, marginBottom: 2 },
   title:        { fontSize: 18, fontWeight: "700", lineHeight: 20, textAlign: "center", paddingTop: 1 },
   subtitle:     { fontSize: 12, opacity: 0.6, textAlign: "center" },
 
@@ -1138,15 +1296,84 @@ const s = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  collectionRowMain: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     backgroundColor: "#F4EEEA",
     borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 10,
-    marginBottom: 8,
+    flex: 1,
+    marginRight: 8,
+  },
+  collectionDeleteBtn: {
+    padding: 6,
   },
   collectionName: {
     fontSize: 13,
     color: "#2E211B",
     fontWeight: "600",
+  },
+
+  // multi-select
+  selectIconButton: {
+    padding: 4,
+  },
+  multiSelectHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: "#FFFAF7",
+    borderBottomWidth: 1,
+    borderBottomColor: "#EDE3DC",
+  },
+  multiSelectCancel: {
+    fontSize: 14,
+    color: "#B56B5B",
+    fontWeight: "600",
+    textTransform: "lowercase",
+  },
+  multiSelectActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+  },
+  multiSelectCount: {
+    fontSize: 12,
+    color: "#7A675C",
+    fontWeight: "500",
+  },
+  multiSelectAction: {
+    fontSize: 12,
+    color: "#4A3728",
+    fontWeight: "600",
+    textTransform: "lowercase",
+  },
+  deleteButton: {
+    backgroundColor: "#B56B5B",
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  selectCheckbox: {
+    position: "absolute",
+    top: 12,
+    left: 12,
+    zIndex: 1,
+  },
+  cardSelected: {
+    borderColor: "#4A3728",
+    borderWidth: 2,
+    transform: [{ scale: 0.98 }],
+  },
+  cardTopRowPadded: {
+    paddingLeft: 30,
   },
 });

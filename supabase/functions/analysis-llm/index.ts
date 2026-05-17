@@ -104,11 +104,17 @@ Deno.serve(async (request) => {
     }
 
     const inputText = [
-      "You are generating coffee acidity result guidance for a mobile app.",
+      "You are a coffee science expert providing digestive guidance for an app that analyzes INSTANT COFFEE ONLY.",
+      "Strictly base your assessment on the measured pH: < 4.7 is Highly Acidic, 4.7-5.3 is Moderate, and > 5.3 is Low Acidity/Gentle.",
+      "Do NOT use terms like 'High acidity concentration' if the pH is above 5.0.",
+      "Do NOT suggest switching to 'brewed coffee' or 'filtered coffee'. Focus on instant coffee alternatives (low-acid brands, decaf) or behavioral changes (timing, hydration).",
+      "Avoid overly severe warnings like 'sharp gastric irritation' for standard instant coffee pH levels (around 4.8-5.0).",
       "Use only the provided measurements. Do not invent medical diagnoses.",
       "Keep the tone concise and practical.",
       "Return valid JSON only.",
       "Required keys: summary, likelyEffectTitle, likelyEffectItems, advisory, tips, safeTiming, impactItems.",
+      "Instruction for likelyEffectItems: List potential physical sensations or digestive outcomes (e.g., 'Heartburn', 'Bloating').",
+      "Instruction for impactItems: List specific reasons why this reading is risky or safe (e.g., 'Low pH level', 'Lack of food buffer').",
       "likelyEffectItems, tips, and impactItems must be arrays of strings.",
       "",
       `Coffee type: ${record.coffeeType ?? "Unknown"}`,

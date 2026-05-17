@@ -5,14 +5,16 @@ import { getStoredAnalysisHistory } from "@/src/store/analysisStore";
 import { AnalysisRecord } from "@/src/types/analysis";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
+import { Image } from "expo-image";
+import { router } from "expo-router";
 import React, { useEffect, useMemo, useState } from "react";
 import {
-    Dimensions,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    TouchableOpacity,
-    View,
+  Dimensions,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import Svg, { Circle, Defs, Line, LinearGradient, Path, Rect, Stop, Text as SvgText } from "react-native-svg";
 
@@ -83,12 +85,12 @@ function getClassificationBreakdown(entries: AnalysisRecord[]) {
 
 function getHourBuckets(entries: AnalysisRecord[]) {
   const buckets = [
-    { label: "6–8am",  range: [6, 8]   as [number, number], count: 0 },
-    { label: "8–10am", range: [8, 10]  as [number, number], count: 0 },
-    { label: "10–12",  range: [10, 12] as [number, number], count: 0 },
-    { label: "12–2pm", range: [12, 14] as [number, number], count: 0 },
-    { label: "2–4pm",  range: [14, 16] as [number, number], count: 0 },
-    { label: "4–6pm",  range: [16, 18] as [number, number], count: 0 },
+    { label: "12–4am", range: [0, 4]   as [number, number], count: 0 },
+    { label: "4–8am",  range: [4, 8]   as [number, number], count: 0 },
+    { label: "8–12pm", range: [8, 12]  as [number, number], count: 0 },
+    { label: "12–4pm", range: [12, 16] as [number, number], count: 0 },
+    { label: "4–8pm",  range: [16, 20] as [number, number], count: 0 },
+    { label: "8–12am", range: [20, 24] as [number, number], count: 0 },
   ];
   entries.forEach((e) => {
     const h = new Date(e.createdAt).getHours();
@@ -99,17 +101,41 @@ function getHourBuckets(entries: AnalysisRecord[]) {
 
 function getSummaryInsights(entries: AnalysisRecord[]): string[] {
   if (!entries.length) return ["No data available for this period."];
+  const results = [];
+
   const acidic = entries.filter(
     (e) => e.classification === "Moderate" || e.classification === "Highly Acidic"
   );
   const pct  = Math.round((acidic.length / entries.length) * 100);
+  results.push(`${pct}% of your entries were "Moderate" or "Highly Acidic".`);
+
   const risk = entries.filter(
     (e) => e.stomachState === "Empty stomach" && e.classification === "Highly Acidic"
   ).length;
-  return [
-    `${pct}% of your entries were "Moderate" or "Highly Acidic".`,
-    `"Empty stomach" + high acidity showed ${risk} higher-risk log${risk !== 1 ? "s" : ""}.`,
-  ];
+  results.push(`"Empty stomach" + high acidity showed ${risk} higher-risk log${risk !== 1 ? "s" : ""}.`);
+
+  // Time-gap logic: check for "new cup" frequency
+  const newCups = [...entries]
+    .filter((e) => e.isNewCup !== false)
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+  let rapidIntakeCount = 0;
+  const GAP_THRESHOLD_MS = 90 * 60 * 1000; // 90 minutes
+
+  for (let i = 1; i < newCups.length; i++) {
+    const diff = new Date(newCups[i].createdAt).getTime() - new Date(newCups[i - 1].createdAt).getTime();
+    if (diff > 0 && diff < GAP_THRESHOLD_MS) {
+      rapidIntakeCount++;
+    }
+  }
+
+  if (rapidIntakeCount > 0) {
+    results.push(
+      `Rapid intake alert: ${rapidIntakeCount} instance${rapidIntakeCount > 1 ? "s" : ""} of drinking coffee less than 90 mins apart. This can stack gastric irritation.`
+    );
+  }
+
+  return results;
 }
 
 function getPatternInsights(entries: AnalysisRecord[]): string[] {
@@ -126,15 +152,17 @@ function getPatternInsights(entries: AnalysisRecord[]): string[] {
 function getComparisonInsight(entries: AnalysisRecord[]): string[] {
   if (entries.length < 2) return ["Log one more analysis to compare your next result."];
 
-  const latest = entries.at(-1)!;
-  const previous = entries.at(-2)!;
+  const latest = entries[entries.length - 1];
+  const previous = entries[entries.length - 2];
   const delta = latest.ph - previous.ph;
   const direction = delta > 0 ? "milder" : delta < 0 ? "more acidic" : "about the same";
   const diffText = Math.abs(delta).toFixed(1);
+  const prevRisk = previous.riskLevel ?? "Low Risk";
+  const currentRisk = latest.riskLevel ?? "Low Risk";
   const riskText =
-    latest.riskLevel === previous.riskLevel
+    currentRisk === prevRisk
       ? "risk stayed steady"
-      : `risk shifted from ${previous.riskLevel.toLowerCase()} to ${latest.riskLevel.toLowerCase()}`;
+      : `risk shifted from ${prevRisk.toLowerCase()} to ${currentRisk.toLowerCase()}`;
 
   return [
     `This result is ${direction} than your previous one by ${diffText} pH.`,
@@ -171,7 +199,12 @@ function getBestTimeInsight(entries: AnalysisRecord[]): string {
 
 function LineChart({ entries }: { entries: AnalysisRecord[] }) {
   const data = entries.slice(-10).map((e) => ({
-    label: new Date(e.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    label: new Date(e.createdAt).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }),
     value: e.ph,
     cls:   e.classification,
   }));
@@ -519,7 +552,7 @@ function FilterDropdown({
 
 export default function DashboardScreen() {
   const [records, setRecords] = useState<AnalysisRecord[]>([]);
-  const [preferences, setPreferences] = useState(UserPreferencesStore.defaults);
+  const [preferences, setPreferences] = useState(UserPreferencesStore.get());
   const [selectedFilter, setSelectedFilter] = useState<FilterOption>(
     FILTER_OPTIONS.find((f) => f.days === 30)!
   );
@@ -539,22 +572,14 @@ export default function DashboardScreen() {
     void UserPreferencesStore.load();
     setPreferences(UserPreferencesStore.get());
     const unsubscribe = UserPreferencesStore.subscribe(setPreferences);
-
-    void (async () => {
-      const stored = await getStoredAnalysisHistory();
-      if (!mounted) return;
-      const sortedOldestFirst = [...stored].sort(
-        (a, b) =>
-          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-      );
-      setRecords(sortedOldestFirst);
-    })();
+    
+    void loadRecords();
 
     return () => {
       mounted = false;
       unsubscribe();
     };
-  }, []);
+  }, [loadRecords]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -576,7 +601,7 @@ export default function DashboardScreen() {
     ? (filteredEntries.reduce((sum, e) => sum + e.ph, 0) / totalScans).toFixed(2)
     : "—";
   const highRisk   = filteredEntries.filter((e) => e.riskLevel === "High Risk").length;
-  const latest     = filteredEntries.at(-1) ?? null;
+  const latest     = filteredEntries.length > 0 ? filteredEntries[filteredEntries.length - 1] : null;
   const contrastColor = preferences.highContrastEnabled ? "#1A1411" : undefined;
 
   return (
@@ -587,7 +612,12 @@ export default function DashboardScreen() {
     >
       {/* ── Header ── */}
       <View style={s.header}>
-        <View>
+        <View style={s.headerMiddle}>
+          <Image
+            source={require("../../assets/images/icon.png")}
+            style={s.headerLogo}
+            resizeMode="contain"
+          />
           <ThemedText
             style={s.title}
             lightColor={Colors.light.text}
@@ -679,7 +709,11 @@ export default function DashboardScreen() {
       </Card>
 
       {/* ── View History button ── */}
-      <TouchableOpacity style={s.historyButton} activeOpacity={0.85}>
+      <TouchableOpacity 
+        style={s.historyButton} 
+        activeOpacity={0.85}
+        onPress={() => router.push("/(tabs)/history")}
+      >
         <View style={s.historyLeft}>
           <View style={s.historyIconCircle}>
             <Ionicons name="time-outline" size={15} color="#FFF" />
@@ -743,6 +777,8 @@ const s = StyleSheet.create({
     paddingBottom: 14,
     backgroundColor: Colors.light.background,
   },
+  headerMiddle: { flex: 1, alignItems: "center", justifyContent: "center" },
+  headerLogo:   { width: 22, height: 22, marginBottom: 2 },
   title: {
     fontSize: 18,
     fontWeight: "700",

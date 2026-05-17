@@ -1,7 +1,6 @@
-import { getCurrentUserSafe, supabase } from "@/lib/supabase";
+import { supabase } from "@/lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { BookmarkStore } from "@/src/data/bookmarkStore";
 import { AnalysisRecord } from "@/src/types/analysis";
 
 type HistoryRow = {
@@ -22,10 +21,10 @@ type HistoryRow = {
   note: string | null;
   stomach_state: AnalysisRecord["stomachState"] | null;
   cups_today: number | null;
+  is_new_cup: boolean | null;
   risk_level: AnalysisRecord["riskLevel"] | null;
   narrative: AnalysisRecord["narrative"] | null;
   is_bookmarked: boolean;
-  is_deleted: boolean;
 };
 
 function toAnalysisRecord(row: HistoryRow): AnalysisRecord {
@@ -46,6 +45,7 @@ function toAnalysisRecord(row: HistoryRow): AnalysisRecord {
     note: row.note ?? undefined,
     stomachState: row.stomach_state ?? undefined,
     cupsToday: row.cups_today ?? undefined,
+    isNewCup: row.is_new_cup ?? true,
     riskLevel: row.risk_level ?? undefined,
     narrative: row.narrative ?? undefined,
   };
@@ -54,7 +54,6 @@ function toAnalysisRecord(row: HistoryRow): AnalysisRecord {
 type QueuedSyncItem = {
   record: AnalysisRecord;
   isBookmarked: boolean;
-  isDeleted: boolean;
   queuedAt: string;
 };
 
@@ -67,8 +66,6 @@ export type SyncStatus = {
 
 const SYNC_QUEUE_KEY = "acidex_sync_queue_v1";
 const SYNC_STATUS_KEY = "acidex_sync_status_v1";
-const ANALYSIS_HISTORY_KEY = "acidex_analysis_history";
-const ANON_SCOPE = "anonymous";
 
 let inMemoryStatus: SyncStatus = {
   pendingCount: 0,
@@ -78,6 +75,7 @@ let inMemoryStatus: SyncStatus = {
 };
 const syncListeners = new Set<(status: SyncStatus) => void>();
 const unsupportedHistoryColumns = new Set<string>();
+const HISTORY_CONFLICT_COLUMN = "id";
 
 function notifySyncStatus() {
   syncListeners.forEach((listener) => listener({ ...inMemoryStatus }));
@@ -124,64 +122,17 @@ function dedupeQueue(items: QueuedSyncItem[]): QueuedSyncItem[] {
   );
 }
 
-function scopedAnalysisHistoryKey(scopeId: string): string {
-  return `${ANALYSIS_HISTORY_KEY}:${scopeId}`;
-}
-
-function dedupeRecordsById(records: AnalysisRecord[]): AnalysisRecord[] {
-  const byId = new Map<string, AnalysisRecord>();
-  records.forEach((record) => byId.set(record.id, record));
-  return Array.from(byId.values()).sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
-}
-
-async function getAllLocalHistoryForSync(scopeId: string): Promise<AnalysisRecord[]> {
-  try {
-    const keys = [
-      scopedAnalysisHistoryKey(scopeId),
-      scopedAnalysisHistoryKey(ANON_SCOPE),
-      ANALYSIS_HISTORY_KEY,
-    ];
-    const entries = await AsyncStorage.multiGet(keys);
-    const parsed = entries.flatMap((entry) => {
-      const raw = entry?.[1];
-      if (!raw) return [] as AnalysisRecord[];
-      try {
-        const value = JSON.parse(raw) as AnalysisRecord[];
-        return Array.isArray(value) ? value : [];
-      } catch {
-        return [] as AnalysisRecord[];
-      }
-    });
-    return dedupeRecordsById(parsed);
-  } catch (error) {
-    console.log("getAllLocalHistoryForSync error:", error);
-    return [];
-  }
-}
-
-async function enqueueForLater(
-  record: AnalysisRecord,
-  isBookmarked: boolean,
-  isDeleted: boolean,
-  error: string | null,
-) {
+async function enqueueForLater(record: AnalysisRecord, isBookmarked: boolean, error: string | null) {
   const queue = await getSyncQueue();
   const nextQueue = dedupeQueue([
     ...queue,
-    { record, isBookmarked, isDeleted, queuedAt: new Date().toISOString() },
+    { record, isBookmarked, queuedAt: new Date().toISOString() },
   ]);
   await saveSyncQueue(nextQueue);
   await setSyncStatus({ lastError: error });
 }
 
-function toHistoryRow(
-  record: AnalysisRecord,
-  profileId: string,
-  isBookmarked: boolean,
-  isDeleted: boolean,
-): HistoryRow {
+function toHistoryRow(record: AnalysisRecord, profileId: string, isBookmarked: boolean): HistoryRow {
   return {
     id: record.id,
     profile_id: profileId,
@@ -200,10 +151,10 @@ function toHistoryRow(
     note: record.note ?? null,
     stomach_state: record.stomachState ?? null,
     cups_today: record.cupsToday ?? null,
+    is_new_cup: record.isNewCup ?? true,
     risk_level: record.riskLevel ?? null,
     narrative: record.narrative ?? null,
     is_bookmarked: isBookmarked,
-    is_deleted: isDeleted,
   };
 }
 
@@ -225,14 +176,16 @@ async function upsertHistoryRow(row: HistoryRow): Promise<string | null> {
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const payload = buildHistoryPayload(row);
-    const { error } = await supabase.from("history").upsert(payload, { onConflict: "id" });
+    const { error } = await supabase.from("history").upsert(payload, {
+      onConflict: HISTORY_CONFLICT_COLUMN,
+    });
     if (!error) return null;
 
     const missingColumn = extractMissingHistoryColumn(error.message);
     if (!missingColumn) return error.message;
 
-    if (missingColumn === "id") {
-      return "Supabase table 'history' must keep id for bookmark sync.";
+    if (missingColumn === HISTORY_CONFLICT_COLUMN) {
+      return "Supabase table 'history' is missing required column 'id' for upsert conflict handling.";
     }
 
     if (unsupportedHistoryColumns.has(missingColumn)) {
@@ -249,16 +202,22 @@ export async function syncHistoryRecordToSupabase(
   isBookmarked: boolean,
 ): Promise<void> {
   try {
-    const user = await getCurrentUserSafe();
-    if (!user) {
-      await enqueueForLater(record, isBookmarked, false, "Signed out. Sync paused.");
+    const { data, error } = await supabase.auth.getUser();
+    if (error) {
+      console.log("syncHistoryRecordToSupabase getUser error:", error.message);
       return;
     }
 
-    const upsertErrorMessage = await upsertHistoryRow(toHistoryRow(record, user.id, isBookmarked, false));
+    const user = data.user;
+    if (!user) {
+      await enqueueForLater(record, isBookmarked, "Signed out. Sync paused.");
+      return;
+    }
+
+    const upsertErrorMessage = await upsertHistoryRow(toHistoryRow(record, user.id, isBookmarked));
     if (upsertErrorMessage) {
       console.log("syncHistoryRecordToSupabase upsert error:", upsertErrorMessage);
-      await enqueueForLater(record, isBookmarked, false, upsertErrorMessage);
+      await enqueueForLater(record, isBookmarked, upsertErrorMessage);
       return;
     }
 
@@ -268,42 +227,34 @@ export async function syncHistoryRecordToSupabase(
     });
   } catch (error) {
     console.log("syncHistoryRecordToSupabase error:", error);
-    await enqueueForLater(
-      record,
-      isBookmarked,
-      false,
-      error instanceof Error ? error.message : "Unknown sync error",
-    );
+    await enqueueForLater(record, isBookmarked, error instanceof Error ? error.message : "Unknown sync error");
   }
 }
 
-export async function syncHistoryDeletionToSupabase(record: AnalysisRecord): Promise<void> {
+export async function syncHistoryDeletionToSupabase(
+  recordId: string
+): Promise<void> {
   try {
-    const user = await getCurrentUserSafe();
-    if (!user) {
-      await enqueueForLater(record, false, true, "Signed out. Sync paused.");
-      return;
-    }
+    const { data, error: authError } = await supabase.auth.getUser();
+    if (authError || !data.user) return;
 
-    const upsertErrorMessage = await upsertHistoryRow(toHistoryRow(record, user.id, false, true));
-    if (upsertErrorMessage) {
-      console.log("syncHistoryDeletionToSupabase upsert error:", upsertErrorMessage);
-      await enqueueForLater(record, false, true, upsertErrorMessage);
-      return;
-    }
+    const user = data.user;
+    const { error } = await supabase
+      .from("history")
+      .delete()
+      .eq("id", recordId)
+      .eq("profile_id", user.id);
 
-    await setSyncStatus({
-      lastSyncedAt: new Date().toISOString(),
-      lastError: null,
-    });
+    if (error) {
+      console.log("syncHistoryDeletionToSupabase error:", error.message);
+    } else {
+      await setSyncStatus({
+        lastSyncedAt: new Date().toISOString(),
+        lastError: null,
+      });
+    }
   } catch (error) {
     console.log("syncHistoryDeletionToSupabase error:", error);
-    await enqueueForLater(
-      record,
-      false,
-      true,
-      error instanceof Error ? error.message : "Unknown sync error",
-    );
   }
 }
 
@@ -320,8 +271,8 @@ export async function loadSyncStatus(): Promise<SyncStatus> {
       lastError: parsed.lastError ?? null,
       isSyncing: false,
     };
-    notifySyncStatus();
-    return { ...inMemoryStatus };
+
+    return inMemoryStatus;
   } catch (error) {
     console.log("loadSyncStatus error:", error);
     return { ...inMemoryStatus };
@@ -345,8 +296,8 @@ export async function flushQueuedHistorySync(): Promise<void> {
       return;
     }
 
-    const user = await getCurrentUserSafe();
-    if (!user) {
+    const { data, error } = await supabase.auth.getUser();
+    if (error || !data.user) {
       await setSyncStatus({
         isSyncing: false,
         pendingCount: queue.length,
@@ -358,7 +309,7 @@ export async function flushQueuedHistorySync(): Promise<void> {
     let remaining = [...queue];
     for (const item of queue) {
       const upsertErrorMessage = await upsertHistoryRow(
-        toHistoryRow(item.record, user.id, item.isBookmarked, item.isDeleted)
+        toHistoryRow(item.record, data.user.id, item.isBookmarked)
       );
       if (upsertErrorMessage) {
         await setSyncStatus({
@@ -388,60 +339,15 @@ export async function flushQueuedHistorySync(): Promise<void> {
   }
 }
 
-export async function syncAllLocalUpdatesNow(): Promise<void> {
-  if (inMemoryStatus.isSyncing) return;
-
-  try {
-    const user = await getCurrentUserSafe();
-    if (!user) {
-      const queue = await getSyncQueue();
-      await setSyncStatus({
-        pendingCount: queue.length,
-        lastError: "Sign in to continue sync.",
-      });
-      return;
-    }
-
-    const localHistory = await getAllLocalHistoryForSync(user.id);
-    const bookmarkedIds = new Set(BookmarkStore.getAll().map((item) => item.id));
-
-    console.log("syncAllLocalUpdatesNow start:", {
-      userId: user.id,
-      localHistoryCount: localHistory.length,
-      bookmarkedCount: bookmarkedIds.size,
-      pendingCount: inMemoryStatus.pendingCount,
-    });
-
-      for (const record of localHistory) {
-        await enqueueForLater(record, bookmarkedIds.has(record.id), false, null);
-    }
-
-    await flushQueuedHistorySync();
-
-    console.log("syncAllLocalUpdatesNow complete:", {
-      userId: user.id,
-      pendingCount: inMemoryStatus.pendingCount,
-      lastSyncedAt: inMemoryStatus.lastSyncedAt,
-      lastError: inMemoryStatus.lastError,
-    });
-  } catch (error) {
-    console.log("syncAllLocalUpdatesNow error:", error);
-    await setSyncStatus({
-      lastError: error instanceof Error ? error.message : "Unknown sync error",
-    });
-  }
-}
-
 export async function pullHistoryFromSupabase(): Promise<AnalysisRecord[] | null> {
   try {
-    const user = await getCurrentUserSafe();
-    if (!user) return null;
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    if (userError || !userData.user) return null;
 
     const { data, error } = await supabase
       .from("history")
       .select("*")
-      .eq("profile_id", user.id)
-      .eq("is_deleted", false)
+      .eq("profile_id", userData.user.id)
       .order("created_at", { ascending: false });
 
     if (error) {

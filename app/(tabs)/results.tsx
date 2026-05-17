@@ -1,19 +1,19 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import { router, useLocalSearchParams } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-    Animated,
-    DimensionValue,
-    Modal,
-    Pressable,
-    ScrollView,
-    Share,
-    StyleSheet,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Animated,
+  DimensionValue,
+  Image,
+  Modal,
+  Pressable,
+  ScrollView,
+  Share,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
 import { ThemedText } from "@/components/themed-text";
@@ -23,7 +23,7 @@ import { BookmarkStore } from "@/src/data/bookmarkStore";
 import { CollectionStore } from "@/src/data/collectionStore";
 import { UserPreferencesStore } from "@/src/data/userPreferencesStore";
 import {
-    getNarrativeWithFallback,
+  getNarrativeWithFallback,
 } from "@/src/services/aiAnalysisService";
 import { buildRuleBasedNarrative } from "@/src/services/analysisService";
 import { shareAnalysisPdf } from "@/src/services/exportService";
@@ -380,58 +380,6 @@ function EmptyResultsOverlay() {
   );
 }
 
-function PdfGeneratingPopup({ visible }: { visible: boolean }) {
-  const opacity = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(10)).current;
-
-  useEffect(() => {
-    if (visible) {
-      Animated.parallel([
-        Animated.spring(translateY, {
-          toValue: 0,
-          useNativeDriver: true,
-          speed: 22,
-          bounciness: 5,
-        }),
-        Animated.timing(opacity, {
-          toValue: 1,
-          duration: 160,
-          useNativeDriver: true,
-        }),
-      ]).start();
-      return;
-    }
-
-    Animated.parallel([
-      Animated.timing(translateY, {
-        toValue: 8,
-        duration: 150,
-        useNativeDriver: true,
-      }),
-      Animated.timing(opacity, {
-        toValue: 0,
-        duration: 150,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, [opacity, translateY, visible]);
-
-  return (
-    <Animated.View
-      style={[
-        r.pdfPopup,
-        {
-          opacity,
-          transform: [{ translateY }],
-        },
-      ]}
-    >
-      <ActivityIndicator size="small" color="#8B6A55" />
-      <ThemedText style={r.pdfPopupText}>generating pdf...</ThemedText>
-    </Animated.View>
-  );
-}
-
 export default function ResultsScreen() {
   const params = useLocalSearchParams<{ recordId?: string }>();
   const [latest, setLatest] = useState<AnalysisRecord | null>(null);
@@ -441,7 +389,6 @@ export default function ResultsScreen() {
   const [coffeeNameText, setCoffeeNameText] = useState("");
   const [toastVisible, setToastVisible] = useState(false);
   const [toastType, setToastType] = useState<ToastType>("save");
-  const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isBookmarked, setIsBookmarked] = useState(false);
   const [renameModalVisible, setRenameModalVisible] = useState(false);
   const [collectionModalVisible, setCollectionModalVisible] = useState(false);
@@ -542,7 +489,6 @@ export default function ResultsScreen() {
   const handleSaveNotes = async () => {
     if (!latest) return;
 
-    console.log("note pressed:", { id: latest.id, note: notesText.trim() || undefined });
     const nextRecord: AnalysisRecord = {
       ...latest,
       note: notesText.trim() || undefined,
@@ -558,7 +504,6 @@ export default function ResultsScreen() {
     if (!latest) return;
 
     const nextCoffeeName = coffeeNameText.trim() || latest.coffeeType;
-    console.log("edit coffee_type pressed:", { id: latest.id, coffee_type: nextCoffeeName });
     const nextCupsToday = latest.cupsToday ?? 1;
     const nextRiskLevel = latest.riskLevel ?? "Low Risk";
     const nextRecord: AnalysisRecord = {
@@ -595,7 +540,6 @@ export default function ResultsScreen() {
     if (!latest) return;
 
     if (isBookmarked) {
-      console.log("bookmark pressed:", { id: latest.id, is_bookmarked: false });
       BookmarkStore.remove(latest.id);
       setIsBookmarked(false);
       void syncHistoryRecordToSupabase(latest, false);
@@ -603,7 +547,6 @@ export default function ResultsScreen() {
       return;
     }
 
-    console.log("bookmark pressed:", { id: latest.id, is_bookmarked: true });
     BookmarkStore.add(latest);
     setIsBookmarked(true);
     void syncHistoryRecordToSupabase(latest, true);
@@ -653,12 +596,7 @@ export default function ResultsScreen() {
   };
   const handleSharePdf = async () => {
     if (!latest) return;
-    setIsGeneratingPdf(true);
-    try {
-      await shareAnalysisPdf(latest);
-    } finally {
-      setIsGeneratingPdf(false);
-    }
+    await shareAnalysisPdf(latest);
   };
 
   const clsColor = latest
@@ -718,6 +656,11 @@ export default function ResultsScreen() {
       >
         <ThemedView style={r.header}>
           <View style={r.headerMiddle}>
+            <Image
+              source={require("../../assets/images/icon.png")}
+              style={r.headerLogo}
+              resizeMode="contain"
+            />
             <ThemedText
               style={r.title}
               lightColor={Colors.light.text}
@@ -1113,9 +1056,6 @@ export default function ResultsScreen() {
       <View style={r.toastWrapper} pointerEvents="none">
         <Toast visible={toastVisible} type={toastType} />
       </View>
-      <View style={r.pdfPopupWrapper} pointerEvents="none">
-        <PdfGeneratingPopup visible={isGeneratingPdf} />
-      </View>
     </ThemedView>
   );
 }
@@ -1257,6 +1197,7 @@ const r = StyleSheet.create({
     justifyContent: "center",
   },
 
+  headerLogo: { width: 22, height: 22, marginBottom: 2 },
   card: {
     borderRadius: 20,
     borderWidth: 1,
@@ -1534,30 +1475,6 @@ const r = StyleSheet.create({
     paddingVertical: 9,
   },
   toastText: { fontSize: 13, fontWeight: "600", textTransform: "lowercase" },
-  pdfPopupWrapper: {
-    position: "absolute",
-    bottom: 78,
-    left: 0,
-    right: 0,
-    alignItems: "center",
-  },
-  pdfPopup: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: "#FFFAF7",
-    borderWidth: 1,
-    borderColor: "#EDE3DC",
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-  },
-  pdfPopupText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#8B6A55",
-    textTransform: "lowercase",
-  },
   collectionRow: {
     flexDirection: "row",
     gap: 8,

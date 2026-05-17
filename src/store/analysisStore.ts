@@ -1,5 +1,5 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getCurrentUserSafe } from "@/lib/supabase";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { BookmarkStore } from "../data/bookmarkStore";
 import { flushQueuedHistorySync, pullHistoryFromSupabase, syncHistoryDeletionToSupabase, syncHistoryRecordToSupabase } from "../services/historySync";
@@ -9,6 +9,8 @@ const LATEST_ANALYSIS_KEY = "acidex_latest_analysis";
 const ANALYSIS_HISTORY_KEY = "acidex_analysis_history";
 const ANALYSIS_MIGRATION_KEY = "acidex_analysis_user_scoped_migration_v1";
 const ANON_SCOPE = "anonymous";
+
+let lastExpandedHistoryId: string | null = null;
 
 const latestAnalysisCacheByScope: Record<string, AnalysisRecord | null> = {};
 
@@ -119,6 +121,10 @@ export async function saveAnalysisRecord(record: AnalysisRecord): Promise<void> 
     await maybeMigrateLegacyAnalysisKeys(scopeId);
     latestAnalysisCacheByScope[scopeId] = record;
     latestAnalysisCacheByScope[ANON_SCOPE] = record;
+
+    // Automatically expand the newest record when the user views history
+    setLastExpandedHistoryId(record.id);
+
     const historyRaw = await AsyncStorage.getItem(scopedKey(ANALYSIS_HISTORY_KEY, scopeId));
     const history = historyRaw ? (JSON.parse(historyRaw) as AnalysisRecord[]) : [];
     const dedupedHistory = history.filter((item) => item.id !== record.id);
@@ -161,10 +167,16 @@ export async function deleteAnalysisRecord(recordId: string): Promise<void> {
       [scopedKey(ANALYSIS_HISTORY_KEY, scopeId), JSON.stringify(nextHistory)],
     ]);
 
-    if (deletedRecord) {
-      void syncHistoryDeletionToSupabase(deletedRecord);
-    }
+    void syncHistoryDeletionToSupabase(recordId);
   } catch (error) {
     console.log("deleteAnalysisRecord error:", error);
   }
+}
+
+export function getLastExpandedHistoryId(): string | null {
+  return lastExpandedHistoryId;
+}
+
+export function setLastExpandedHistoryId(id: string | null): void {
+  lastExpandedHistoryId = id;
 }

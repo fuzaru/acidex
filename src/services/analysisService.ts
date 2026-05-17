@@ -93,14 +93,13 @@ export function buildRuleBasedNarrative(
         ? "Possible discomfort"
         : "Lower likelihood of discomfort";
 
-  const likelyEffectItems = [`${item.coffeeType} (${acidityDescriptor})`];
-  if (item.stomachState === "Empty stomach") {
-    likelyEffectItems.push("Empty stomach (session time)");
-  } else if (item.stomachState === "After meal") {
-    likelyEffectItems.push("After meal (better timing)");
-  }
-  if (typeof item.cupsToday === "number") {
-    likelyEffectItems.push(`${item.cupsToday} cup${item.cupsToday > 1 ? "s" : ""} today (habit)`);
+  const likelyEffectItems = [];
+  if (item.riskLevel === "High Risk") {
+    likelyEffectItems.push("Increased likelihood of acid reflux", "Potential for temporary stomach heaviness", "Possible heartburn sensation");
+  } else if (item.riskLevel === "Moderate Risk") {
+    likelyEffectItems.push("Possible mild indigestion", "Slight bloating", "Potential for minor heartburn");
+  } else {
+    likelyEffectItems.push("Generally well-tolerated", "Minimal gastric impact", "Low likelihood of reflux");
   }
 
   const advisory =
@@ -115,7 +114,7 @@ export function buildRuleBasedNarrative(
     "Stay hydrated: drink water alongside coffee",
     "Limit intake: keep it to 1-2 cups per day",
     item.classification === "Highly Acidic"
-      ? "Switch to lower-acidity types like brewed or decaf"
+      ? "Switch to lower-acidity instant brands or decaf"
       : "Avoid drinking coffee too quickly to reduce irritation",
   ];
 
@@ -124,16 +123,22 @@ export function buildRuleBasedNarrative(
       ? "Best to drink coffee 30-45 minutes after eating to lessen irritation."
       : "Continue drinking coffee after meals for better stomach comfort.";
 
-  const impactItems = [
-    item.classification === "Highly Acidic"
-      ? `${item.coffeeType} (strong acidity profile in this reading)`
-      : item.classification === "Moderate"
-        ? `${item.coffeeType} (moderate acidity profile in this reading)`
-        : `${item.coffeeType} (milder acidity profile in this reading)`,
-  ];
-  if (item.stomachState === "Empty stomach") impactItems.push("Empty stomach (magnifies irritation)");
-  if ((item.cupsToday ?? 0) >= 2) impactItems.push("Multiple cups (higher total acidity)");
-  if (impactItems.length < 3) impactItems.push("Brewing method can also affect acidity level");
+  const impactItems = [];
+  
+  const acidityLabel = 
+    item.classification === "Highly Acidic" ? "High acidity concentration" :
+    item.classification === "Moderate" ? "Moderate acidity level" :
+    "Lower acidity concentration";
+
+  impactItems.push(`${acidityLabel} (pH ${item.ph.toFixed(2)})`);
+  
+  if (item.stomachState === "Empty stomach") {
+    impactItems.push("Consumption on an empty stomach");
+  }
+  if ((item.cupsToday ?? 0) >= 2) {
+    impactItems.push(`Daily intake: ${item.cupsToday} cups`);
+  }
+  if (impactItems.length < 3) impactItems.push("Specific instant coffee processing and formulation");
 
   return {
     summary,
@@ -148,22 +153,22 @@ export function buildRuleBasedNarrative(
 }
 
 export function classifyPhBand(ph: number): PHClassification {
-  if (ph < 4.9) return "Highly Acidic";
+  if (ph < 4.7) return "Highly Acidic";
   if (ph < 5.3) return "Moderate";
   return "Low Acidic";
 }
 
 export function classifyRiskLevel(
-  phClassification: PHClassification,
+  mlLabel: BinaryAcidityLabel,
   stomachState?: AnalysisRecord["stomachState"]
 ): RiskLevel {
-  if (phClassification === "Highly Acidic" && stomachState === "Empty stomach") {
+  if (mlLabel === "Acidic" && stomachState === "Empty stomach") {
     return "High Risk";
   }
 
   if (
-    phClassification === "Highly Acidic" ||
-    (phClassification === "Moderate" && stomachState === "Empty stomach")
+    mlLabel === "Acidic" || 
+    (mlLabel === "Non-Acidic" && stomachState === "Empty stomach")
   ) {
     return "Moderate Risk";
   }
@@ -212,13 +217,17 @@ export function buildAnalysisRecord(
     coffeeType?: string;
     stomachState?: AnalysisRecord["stomachState"];
     note?: string;
+    isNewCup?: boolean;
+    cupsToday?: number;
   }
 ): AnalysisRecord {
   const classification = classifyPhBand(reading.ph);
   const stomachState = options?.stomachState ?? "After meal";
   const binary = classifyBinaryAcidity(reading);
   const coffeeType = options?.coffeeType ?? `Sample ${reading.sampleId}`;
-  const riskLevel = classifyRiskLevel(classification, stomachState);
+  const riskLevel = classifyRiskLevel(binary.label, stomachState);
+  const isNewCup = options?.isNewCup ?? true;
+  const cupsToday = options?.cupsToday ?? 1;
 
   return {
     id: `${Date.now()}-${reading.sampleId}`,
@@ -236,6 +245,8 @@ export function buildAnalysisRecord(
     sampleId: reading.sampleId,
     note: options?.note,
     stomachState,
+    cupsToday,
+    isNewCup,
     riskLevel,
     narrative: buildRuleBasedNarrative({
       coffeeType,
@@ -243,6 +254,7 @@ export function buildAnalysisRecord(
       classification,
       riskLevel,
       stomachState,
+      cupsToday,
     }),
   };
 }
@@ -289,26 +301,41 @@ export function getCoffeeTypeAverages(): CoffeeTypeAverage[] {
 }
 
 export function getSummaryInsights(): string[] {
-  const total = mockAnalysisRecords.length;
+  const entries = mockAnalysisRecords;
+  const total = entries.length;
+  const results = [];
 
-  const moderateOrHigh = mockAnalysisRecords.filter(
+  const moderateOrHigh = entries.filter(
     (item) =>
       item.classification === "Moderate" ||
       item.classification === "Highly Acidic"
   ).length;
-
   const percent = total ? roundTo1((moderateOrHigh / total) * 100) : 0;
+  results.push(`${percent}% of your entries were "Moderate" or "Highly Acidic".`);
 
-  const emptyHighRisk = mockAnalysisRecords.filter(
+  const emptyHighRisk = entries.filter(
     (item) =>
       item.stomachState === "Empty stomach" &&
       item.riskLevel === "High Risk"
   ).length;
+  results.push(`"Empty stomach" + high acidity showed ${emptyHighRisk} higher-risk logs.`);
 
-  return [
-    `${percent}% of your entries were "Moderate" or "Highly Acidic".`,
-    `"Empty stomach" + high acidity showed ${emptyHighRisk} higher-risk logs.`,
-  ];
+  // Time-gap logic for mock data
+  const newCups = [...entries]
+    .filter((e) => e.isNewCup !== false)
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+  let rapidIntakeCount = 0;
+  for (let i = 1; i < newCups.length; i++) {
+    const diff = new Date(newCups[i].createdAt).getTime() - new Date(newCups[i - 1].createdAt).getTime();
+    if (diff > 0 && diff < 90 * 60 * 1000) rapidIntakeCount++;
+  }
+
+  if (rapidIntakeCount > 0) {
+    results.push(`Detected ${rapidIntakeCount} cases of back-to-back coffee consumption in under 90 minutes.`);
+  }
+
+  return results;
 }
 
 export function getPatternInsights(): string[] {
