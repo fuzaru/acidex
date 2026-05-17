@@ -1,3 +1,4 @@
+import * as FileSystem from "expo-file-system";
 import * as Print from "expo-print";
 import * as Sharing from "expo-sharing";
 
@@ -8,6 +9,16 @@ function esc(value: string): string {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+function toFileSafeName(value: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return normalized || "coffee";
 }
 
 export async function shareAnalysisPdf(record: AnalysisRecord): Promise<void> {
@@ -29,8 +40,21 @@ export async function shareAnalysisPdf(record: AnalysisRecord): Promise<void> {
   `;
 
   const file = await Print.printToFileAsync({ html });
+  const fileName = `results-${toFileSafeName(record.coffeeType)}.pdf`;
+  let shareUri = file.uri;
+
+  if (FileSystem.cacheDirectory) {
+    const targetUri = `${FileSystem.cacheDirectory}${fileName}`;
+    const targetInfo = await FileSystem.getInfoAsync(targetUri);
+    if (targetInfo.exists) {
+      await FileSystem.deleteAsync(targetUri, { idempotent: true });
+    }
+    await FileSystem.moveAsync({ from: file.uri, to: targetUri });
+    shareUri = targetUri;
+  }
+
   if (!(await Sharing.isAvailableAsync())) return;
-  await Sharing.shareAsync(file.uri, {
+  await Sharing.shareAsync(shareUri, {
     UTI: ".pdf",
     mimeType: "application/pdf",
   });

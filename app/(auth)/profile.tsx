@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { getCurrentUserSafe, supabase } from "@/lib/supabase";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { useRouter } from "expo-router";
@@ -11,7 +11,7 @@ import Colors from "@/constants/colors";
 import { useThemeColor } from "@/hooks/use-theme-color";
 import { getStoredThemeMode, saveThemeMode } from "@/src/data/themeStore";
 import { TastePreset, UserPreferences, UserPreferencesStore } from "@/src/data/userPreferencesStore";
-import { flushQueuedHistorySync, loadSyncStatus, subscribeSyncStatus, SyncStatus } from "@/src/services/historySync";
+import { loadSyncStatus, subscribeSyncStatus, syncAllLocalUpdatesNow, SyncStatus } from "@/src/services/historySync";
 
 const DEFAULT_AVATARS = [
   require("../../assets/images/avatars/avatar1.png"),
@@ -116,13 +116,7 @@ export default function ProfileScreen() {
         setIsDarkMode((Appearance.getColorScheme() ?? "light") === "dark");
       }
 
-      const { data, error } = await supabase.auth.getUser();
-      if (error) {
-        console.log("getUser error:", error.message);
-        return;
-      }
-
-      const user = data.user;
+      const user = await getCurrentUserSafe();
       if (!user) return;
 
       setEmail(user.email ?? "username");
@@ -165,6 +159,17 @@ export default function ProfileScreen() {
 
   const updatePreferences = async (next: Partial<UserPreferences>) => {
     await UserPreferencesStore.update(next);
+  };
+
+  const handleSyncNow = async () => {
+    console.log("sync now pressed:", {
+      pendingCount: syncStatus.pendingCount,
+      lastSyncedAt: syncStatus.lastSyncedAt,
+      lastError: syncStatus.lastError,
+      isSyncing: syncStatus.isSyncing,
+    });
+
+    await syncAllLocalUpdatesNow();
   };
 
   const handleSwitchAccount = async () => {
@@ -251,7 +256,7 @@ export default function ProfileScreen() {
                     : "all changes synced"
                 }
                 trailing={
-                  <TouchableOpacity onPress={() => void flushQueuedHistorySync()} activeOpacity={0.8} style={styles.syncButton}>
+                  <TouchableOpacity onPress={() => void handleSyncNow()} activeOpacity={0.8} style={styles.syncButton}>
                     <ThemedText style={styles.syncButtonText}>
                       {syncStatus.isSyncing ? "syncing..." : "sync now"}
                     </ThemedText>

@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { getCurrentUserSafe, supabase } from "@/lib/supabase";
 import { maybeEnrichAnalysisRecordWithLlm } from "@/src/services/aiAnalysisService";
 import {
     buildRuleBasedNarrative,
@@ -234,8 +234,7 @@ export default function HomeScreen() {
   // ── data loading ──────────────────────────────────────────────────────────
   useEffect(() => {
     const fetchUserAndAvatar = async () => {
-      const { data: { user }, error: userErr } = await supabase.auth.getUser();
-      if (userErr) { console.log("getUser error:", userErr.message); return; }
+      const user = await getCurrentUserSafe();
       if (!user) return;
 
       setUserName(user.user_metadata?.full_name || user.email || "User");

@@ -4,6 +4,7 @@ import Colors from "@/constants/colors";
 import { useThemeColor } from "@/hooks/use-theme-color";
 import { BookmarkStore } from "@/src/data/bookmarkStore";
 import { CollectionStore } from "@/src/data/collectionStore";
+import { syncHistoryRecordToSupabase } from "@/src/services/historySync";
 import { deleteAnalysisRecord, getStoredAnalysisHistory, saveAnalysisRecord } from "@/src/store/analysisStore";
 import { AnalysisRecord } from "@/src/types/analysis";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
@@ -11,6 +12,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+<<<<<<< HEAD
   Alert,
   Modal,
   Pressable,
@@ -20,6 +22,18 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+=======
+  Animated,
+    Modal,
+    Pressable,
+    ScrollView,
+    Share,
+  Easing,
+    StyleSheet,
+    TextInput,
+    TouchableOpacity,
+    View,
+>>>>>>> my-updates
 } from "react-native";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -35,6 +49,93 @@ const RISK_COLORS: Record<string, { bg: string; text: string }> = {
   "Moderate Risk": { bg: "#FEF0D6", text: "#7A4A00" },
   "Low Risk":      { bg: "#DCF0E4", text: "#1A5C34" },
 };
+
+type ToastType = "delete" | "bookmark" | "collection";
+
+const TOAST_CONFIG: Record<
+  ToastType,
+  { icon: keyof typeof Ionicons.glyphMap; color: string; bg: string; border: string; label: string }
+> = {
+  delete: {
+    icon: "trash-outline",
+    color: "#B56B5B",
+    bg: "#F8EEEA",
+    border: "#E6D6CF",
+    label: "deleted",
+  },
+  bookmark: {
+    icon: "bookmark",
+    color: "#4A3728",
+    bg: "#FFFAF7",
+    border: "#EDE3DC",
+    label: "bookmarked",
+  },
+  collection: {
+    icon: "albums-outline",
+    color: "#4A3728",
+    bg: "#F4EEEA",
+    border: "#E0D5CC",
+    label: "added to collection",
+  },
+};
+
+function Toast({ visible, type }: { visible: boolean; type: ToastType }) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(10)).current;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.parallel([
+        Animated.spring(translateY, {
+          toValue: 0,
+          useNativeDriver: true,
+          speed: 22,
+          bounciness: 5,
+        }),
+        Animated.timing(opacity, {
+          toValue: 1,
+          duration: 160,
+          useNativeDriver: true,
+        }),
+      ]).start();
+      return;
+    }
+
+    Animated.parallel([
+      Animated.timing(translateY, {
+        toValue: 8,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacity, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [opacity, translateY, visible]);
+
+  const config = TOAST_CONFIG[type];
+
+  return (
+    <Animated.View
+      style={[
+        s.toast,
+        {
+          opacity,
+          transform: [{ translateY }],
+          backgroundColor: config.bg,
+          borderColor: config.border,
+        },
+      ]}
+    >
+      <Ionicons name={config.icon} size={15} color={config.color} />
+      <ThemedText style={[s.toastText, { color: config.color }]}>
+        {config.label}
+      </ThemedText>
+    </Animated.View>
+  );
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -79,6 +180,13 @@ export default function HistoryScreen() {
   const [collectionModalVisible, setCollectionModalVisible] = useState(false);
   const [collectionTarget, setCollectionTarget] = useState<AnalysisRecord | null>(null);
   const [newCollectionName, setNewCollectionName] = useState("");
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<AnalysisRecord | null>(null);
+  const [deleteModalKind, setDeleteModalKind] = useState<"record" | "collection" | null>(null);
+  const [deleteCollectionTarget, setDeleteCollectionTarget] = useState("");
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastType, setToastType] = useState<ToastType>("bookmark");
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   const loadRecords = React.useCallback(async () => {
     const stored = await getStoredAnalysisHistory();
@@ -88,6 +196,13 @@ export default function HistoryScreen() {
     setRecords(sorted);
     setExpandedId((current) => current ?? sorted[0]?.id ?? null);
   }, []);
+
+  const showToast = (type: ToastType) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToastType(type);
+    setToastVisible(true);
+    toastTimer.current = setTimeout(() => setToastVisible(false), 1800);
+  };
 
   const handleExportSummary = async () => {
     if (!filteredRecords.length) return;
@@ -171,6 +286,7 @@ export default function HistoryScreen() {
     if (!renameTarget) return;
 
     const nextName = renameText.trim() || renameTarget.coffeeType;
+    console.log("edit coffee_type pressed:", { id: renameTarget.id, coffee_type: nextName });
     const nextRecord: AnalysisRecord = {
       ...renameTarget,
       coffeeType: nextName,
@@ -185,26 +301,51 @@ export default function HistoryScreen() {
   };
 
   const deleteRecord = (item: AnalysisRecord) => {
-    Alert.alert(
-      "Delete record",
-      `Remove "${item.coffeeType}" from history?`,
-      [
-        { text: "cancel", style: "cancel" },
-        {
-          text: "delete",
-          style: "destructive",
-          onPress: async () => {
-            await deleteAnalysisRecord(item.id);
-            await CollectionStore.removeRecordFromAll(item.id);
-            BookmarkStore.remove(item.id);
-            setRecords((current) => current.filter((record) => record.id !== item.id));
-            if (expandedId === item.id) {
-              setExpandedId(null);
-            }
-          },
-        },
-      ]
-    );
+    setDeleteTarget(item);
+    setDeleteCollectionTarget("");
+    setDeleteModalKind("record");
+    setDeleteModalVisible(true);
+  };
+
+  const deleteCollection = (collectionName: string) => {
+    setDeleteTarget(null);
+    setDeleteCollectionTarget(collectionName);
+    setDeleteModalKind("collection");
+    setDeleteModalVisible(true);
+  };
+
+  const cancelDeleteRecord = () => {
+    setDeleteModalVisible(false);
+    setDeleteTarget(null);
+    setDeleteCollectionTarget("");
+    setDeleteModalKind(null);
+  };
+
+  const confirmDeleteRecord = async () => {
+    if (deleteModalKind === "collection") {
+      if (!deleteCollectionTarget) return;
+      console.log("delete collection pressed:", { collection: deleteCollectionTarget });
+      await CollectionStore.removeCollection(deleteCollectionTarget);
+      if (selectedFilter === `Collection: ${deleteCollectionTarget}`) {
+        setSelectedFilter("All");
+      }
+      showToast("delete");
+      cancelDeleteRecord();
+      return;
+    }
+
+    if (!deleteTarget) return;
+
+    console.log("delete pressed:", { id: deleteTarget.id, is_deleted: true });
+    await deleteAnalysisRecord(deleteTarget.id);
+    await CollectionStore.removeRecordFromAll(deleteTarget.id);
+    BookmarkStore.remove(deleteTarget.id);
+    setRecords((current) => current.filter((record) => record.id !== deleteTarget.id));
+    if (expandedId === deleteTarget.id) {
+      setExpandedId(null);
+    }
+    showToast("delete");
+    cancelDeleteRecord();
   };
 
   const openCollectionModal = (item: AnalysisRecord) => {
@@ -216,6 +357,7 @@ export default function HistoryScreen() {
   const toggleCollectionMembership = async (collectionName: string) => {
     if (!collectionTarget) return;
     await CollectionStore.toggle(collectionName, collectionTarget.id);
+    showToast("collection");
   };
 
   const createCollectionWithTarget = async () => {
@@ -224,6 +366,7 @@ export default function HistoryScreen() {
     if (!name) return;
     await CollectionStore.create(name, [collectionTarget.id]);
     setNewCollectionName("");
+    showToast("collection");
   };
 
   return (
@@ -271,11 +414,14 @@ export default function HistoryScreen() {
           >
             {filters.map((f) => {
               const active = selectedFilter === f;
+              const isCollectionFilter = f.startsWith("Collection: ");
               return (
                 <TouchableOpacity
                   key={f}
                   activeOpacity={0.8}
                   onPress={() => setSelectedFilter(f)}
+                  onLongPress={isCollectionFilter ? () => deleteCollection(f.replace("Collection: ", "")) : undefined}
+                  delayLongPress={250}
                   style={[s.filterChip, active && s.filterChipActive]}
                 >
                   <ThemedText style={[s.filterChipText, active && s.filterChipTextActive]}>
@@ -305,11 +451,59 @@ export default function HistoryScreen() {
         ) : (
           filteredRecords.map((item) =>
             expandedId === item.id
-              ? <ExpandedCard key={item.id} item={item} onCollapse={() => setExpandedId(null)} onRename={() => openRenameModal(item)} onDelete={() => deleteRecord(item)} onAddToCollection={() => openCollectionModal(item)} onOpenResult={() => router.push({ pathname: "/(tabs)/results", params: { recordId: item.id } })} />
-              : <CollapsedCard key={item.id} item={item} onExpand={() => setExpandedId(item.id)} onDelete={() => deleteRecord(item)} onAddToCollection={() => openCollectionModal(item)} onOpenResult={() => router.push({ pathname: "/(tabs)/results", params: { recordId: item.id } })} />
+              ? <ExpandedCard key={item.id} item={item} onCollapse={() => setExpandedId(null)} onRename={() => openRenameModal(item)} onDelete={() => deleteRecord(item)} onAddToCollection={() => openCollectionModal(item)} onOpenResult={() => router.push({ pathname: "/(tabs)/results", params: { recordId: item.id } })} onBookmarkToast={() => showToast("bookmark")} />
+              : <CollapsedCard key={item.id} item={item} onExpand={() => setExpandedId(item.id)} onDelete={() => deleteRecord(item)} onAddToCollection={() => openCollectionModal(item)} onOpenResult={() => router.push({ pathname: "/(tabs)/results", params: { recordId: item.id } })} onBookmarkToast={() => showToast("bookmark")} />
           )
         )}
       </ScrollView>
+
+      <View style={s.toastWrapper} pointerEvents="none">
+        <Toast visible={toastVisible} type={toastType} />
+      </View>
+
+      <Modal
+        transparent
+        animationType="fade"
+        visible={deleteModalVisible}
+        onRequestClose={cancelDeleteRecord}
+      >
+        <Pressable style={s.deleteOverlay} onPress={cancelDeleteRecord}>
+          <Pressable style={s.deleteModalShell} onPress={(e) => e.stopPropagation()}>
+            <View style={s.deleteModal}>
+              <ThemedText style={s.deleteTitle}>
+                {deleteModalKind === "collection" ? "Delete collection?" : "Delete record?"}
+              </ThemedText>
+              <ThemedText style={s.deleteSubtitle}>
+                {deleteModalKind === "collection"
+                  ? deleteCollectionTarget
+                    ? `Remove collection "${deleteCollectionTarget}"?`
+                    : "This cannot be undone."
+                  : deleteTarget
+                    ? `Remove "${deleteTarget.coffeeType}" from history?`
+                    : "This cannot be undone."}
+              </ThemedText>
+
+              <View style={s.deleteActions}>
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={[s.deleteActionBtn, s.deleteCancelBtn]}
+                  onPress={cancelDeleteRecord}
+                >
+                  <ThemedText style={s.deleteCancelText}>cancel</ThemedText>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  activeOpacity={0.85}
+                  style={[s.deleteActionBtn, s.deleteConfirmBtn]}
+                  onPress={() => void confirmDeleteRecord()}
+                >
+                  <ThemedText style={s.deleteConfirmText}>delete</ThemedText>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal
         transparent
@@ -396,7 +590,7 @@ export default function HistoryScreen() {
 
 // ─── Collapsed Card ───────────────────────────────────────────────────────────
 
-function CollapsedCard({ item, onExpand, onDelete, onAddToCollection, onOpenResult }: { item: AnalysisRecord; onExpand: () => void; onDelete: () => void; onAddToCollection: () => void; onOpenResult: () => void }) {
+function CollapsedCard({ item, onExpand, onDelete, onAddToCollection, onOpenResult, onBookmarkToast }: { item: AnalysisRecord; onExpand: () => void; onDelete: () => void; onAddToCollection: () => void; onOpenResult: () => void; onBookmarkToast: () => void }) {
   const cls  = CLASSIFICATION_COLORS[item.classification] ?? CLASSIFICATION_COLORS["Moderate"];
   const risk = RISK_COLORS[item.riskLevel ?? "Low Risk"]  ?? RISK_COLORS["Low Risk"];
 
@@ -408,8 +602,18 @@ function CollapsedCard({ item, onExpand, onDelete, onAddToCollection, onOpenResu
   }, [item.id]);
 
   const handleBookmarkToggle = () => {
-    if (isBookmarked) BookmarkStore.remove(item.id);
-    else BookmarkStore.add(item);
+    if (isBookmarked) {
+      console.log("bookmark pressed:", { id: item.id, is_bookmarked: false });
+      BookmarkStore.remove(item.id);
+      onBookmarkToast();
+      void syncHistoryRecordToSupabase(item, false);
+      return;
+    }
+
+    console.log("bookmark pressed:", { id: item.id, is_bookmarked: true });
+    BookmarkStore.add(item);
+    onBookmarkToast();
+    void syncHistoryRecordToSupabase(item, true);
   };
 
   return (
@@ -476,6 +680,7 @@ function ExpandedCard({
   onDelete,
   onAddToCollection,
   onOpenResult,
+  onBookmarkToast,
 }: {
   item: AnalysisRecord;
   onCollapse: () => void;
@@ -483,6 +688,7 @@ function ExpandedCard({
   onDelete: () => void;
   onAddToCollection: () => void;
   onOpenResult: () => void;
+  onBookmarkToast: () => void;
 }) {
   const cls  = CLASSIFICATION_COLORS[item.classification] ?? CLASSIFICATION_COLORS["Moderate"];
   const risk = RISK_COLORS[item.riskLevel ?? "Low Risk"]  ?? RISK_COLORS["Low Risk"];
@@ -495,8 +701,18 @@ function ExpandedCard({
   }, [item.id]);
 
   const handleBookmarkToggle = () => {
-    if (isBookmarked) BookmarkStore.remove(item.id);
-    else BookmarkStore.add(item);
+    if (isBookmarked) {
+      console.log("bookmark pressed:", { id: item.id, is_bookmarked: false });
+      BookmarkStore.remove(item.id);
+      onBookmarkToast();
+      void syncHistoryRecordToSupabase(item, false);
+      return;
+    }
+
+    console.log("bookmark pressed:", { id: item.id, is_bookmarked: true });
+    BookmarkStore.add(item);
+    onBookmarkToast();
+    void syncHistoryRecordToSupabase(item, true);
   };
 
   return (
@@ -581,8 +797,9 @@ function ExpandedCard({
       </View>
 
       <TouchableOpacity style={s.viewResultBtn} onPress={onOpenResult} activeOpacity={0.8}>
-        <Ionicons name="open-outline" size={14} color="#4A3728" />
-        <ThemedText style={s.viewResultBtnText}>view full result</ThemedText>
+        <ThemedText style={s.viewResultBtnText} numberOfLines={2}>
+          view full details
+        </ThemedText>
       </TouchableOpacity>
 
     </TouchableOpacity>
@@ -715,14 +932,117 @@ const s = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    backgroundColor: "#F4EEEA",
+    backgroundColor: Colors.light.background,
     borderRadius: 999,
-    paddingVertical: 10,
+    width: "100%",
+    alignSelf: "stretch",
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: "#E0D5CC",
+    minHeight: 44,
   },
   viewResultBtnText: {
-    fontSize: 12,
+    fontSize: 11,
     color: "#4A3728",
     fontWeight: "600",
+    textTransform: "lowercase",
+    flex: 1,
+    flexShrink: 1,
+    flexWrap: "wrap",
+    textAlign: "center",
+  },
+
+  toastWrapper: {
+    position: "absolute",
+    bottom: 28,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 1000,
+    elevation: 10,
+  },
+  toast: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+  },
+  toastText: { fontSize: 13, fontWeight: "600", textTransform: "lowercase" },
+
+  deleteOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+  },
+  deleteModalShell: {
+    width: "100%",
+    maxWidth: 360,
+    alignSelf: "stretch",
+  },
+  deleteModal: {
+    width: "100%",
+    backgroundColor: Colors.light.background,
+    borderRadius: 20,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: "#EDE3DC",
+    alignItems: "center",
+  },
+  deleteTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#2E211B",
+    marginBottom: 6,
+    textAlign: "center",
+
+  },
+  deleteSubtitle: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: "#7A675C",
+    textAlign: "center",
+  },
+  deleteActions: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: 16,
+    alignSelf: "stretch",
+  },
+  deleteActionBtn: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 30,
+    paddingVertical: 11,
+    borderWidth: 1,
+  },
+  deleteCancelBtn: {
+    backgroundColor: "#F4EEEA",
+    borderWidth: 1,
+    borderColor: "#E0D5CC",
+  },
+  deleteConfirmBtn: {
+    backgroundColor: "#3C2C24",
+    borderColor: "#3C2C24",
+  },
+  deleteCancelText: {
+    fontSize: 13,
+    color: "#8B6A55",
+    fontWeight: "600",
+    textTransform: "lowercase",
+  },
+  deleteConfirmText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#FFF",
     textTransform: "lowercase",
   },
 

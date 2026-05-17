@@ -1,8 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { supabase } from "@/lib/supabase";
+import { getCurrentUserSafe } from "@/lib/supabase";
 
 import { BookmarkStore } from "../data/bookmarkStore";
-import { flushQueuedHistorySync, pullHistoryFromSupabase, syncHistoryRecordToSupabase } from "../services/historySync";
+import { flushQueuedHistorySync, pullHistoryFromSupabase, syncHistoryDeletionToSupabase, syncHistoryRecordToSupabase } from "../services/historySync";
 import { AnalysisRecord } from "../types/analysis";
 
 const LATEST_ANALYSIS_KEY = "acidex_latest_analysis";
@@ -14,9 +14,8 @@ const latestAnalysisCacheByScope: Record<string, AnalysisRecord | null> = {};
 
 async function getUserScopeId(): Promise<string> {
   try {
-    const { data, error } = await supabase.auth.getUser();
-    if (error) return ANON_SCOPE;
-    return data.user?.id ?? ANON_SCOPE;
+    const user = await getCurrentUserSafe();
+    return user?.id ?? ANON_SCOPE;
   } catch {
     return ANON_SCOPE;
   }
@@ -146,6 +145,7 @@ export async function deleteAnalysisRecord(recordId: string): Promise<void> {
     await maybeMigrateLegacyAnalysisKeys(scopeId);
     const historyRaw = await AsyncStorage.getItem(scopedKey(ANALYSIS_HISTORY_KEY, scopeId));
     const history = historyRaw ? (JSON.parse(historyRaw) as AnalysisRecord[]) : [];
+    const deletedRecord = history.find((item) => item.id === recordId) ?? null;
     const nextHistory = history.filter((item) => item.id !== recordId);
 
     const latestRaw = await AsyncStorage.getItem(scopedKey(LATEST_ANALYSIS_KEY, scopeId));
@@ -160,6 +160,10 @@ export async function deleteAnalysisRecord(recordId: string): Promise<void> {
       [scopedKey(LATEST_ANALYSIS_KEY, scopeId), JSON.stringify(nextLatest)],
       [scopedKey(ANALYSIS_HISTORY_KEY, scopeId), JSON.stringify(nextHistory)],
     ]);
+
+    if (deletedRecord) {
+      void syncHistoryDeletionToSupabase(deletedRecord);
+    }
   } catch (error) {
     console.log("deleteAnalysisRecord error:", error);
   }
