@@ -43,6 +43,9 @@ static const float CAL_PH_HIGH = 7.0f;
 
 // ADS1115 scaling (GAIN_ONE)
 static const float ADS_LSB_V = 0.000125f;
+static const int LED_RED_PIN = 12;
+static const unsigned long LED_FAST_BLINK_MS = 250UL;
+static const unsigned long LED_SLOW_BLINK_MS = 600UL;
 
 // ================================================
 // ========== STABILITY PARAMETERS ===============
@@ -94,6 +97,24 @@ String classifyPH(float ph) {
   return "UNCERTAIN";
 }
 
+void setLedDefault() {
+  digitalWrite(LED_RED_PIN, HIGH);
+}
+
+void blinkLedDoneThenDefault(unsigned long durationMs = 2000UL) {
+  unsigned long start = millis();
+  bool ledOn = true;
+  digitalWrite(LED_RED_PIN, HIGH);
+
+  while (millis() - start < durationMs) {
+    ledOn = !ledOn;
+    digitalWrite(LED_RED_PIN, ledOn ? HIGH : LOW);
+    delay(LED_SLOW_BLINK_MS);
+  }
+
+  setLedDefault();
+}
+
 AutoMeasureResult measureAutoStable() {
   AutoMeasureResult out;
   out.avgVoltage = NAN;
@@ -107,9 +128,18 @@ AutoMeasureResult measureAutoStable() {
   unsigned long startMs = millis();
   unsigned long stableStartMs = 0;
   unsigned long lastStatusMs = 0;
+  unsigned long lastBlinkMs = 0;
+  bool ledOn = true;
+  digitalWrite(LED_RED_PIN, HIGH);
 
   while (true) {
     float v = readVoltage();
+
+    if (millis() - lastBlinkMs >= LED_FAST_BLINK_MS) {
+      lastBlinkMs = millis();
+      ledOn = !ledOn;
+      digitalWrite(LED_RED_PIN, ledOn ? HIGH : LOW);
+    }
 
     if (millis() - lastStatusMs >= MEASURE_STATUS_INTERVAL_MS) {
       lastStatusMs = millis();
@@ -151,6 +181,7 @@ AutoMeasureResult measureAutoStable() {
 
           out.samplesCollected = n;
           out.avgVoltage = (n > 0) ? (sum / (float)n) : NAN;
+          blinkLedDoneThenDefault();
           return out;
         }
       } else {
@@ -173,6 +204,7 @@ AutoMeasureResult measureAutoStable() {
       out.stabilizationTimeSec = (int)((millis() - startMs) / 1000UL);
       out.samplesCollected = n;
       out.avgVoltage = (n > 0) ? (sum / (float)n) : NAN;
+      blinkLedDoneThenDefault();
       return out;
     }
 
@@ -334,6 +366,9 @@ void handleGetCal() {
 // ================== SETUP =======================
 // ================================================
 void setup() {
+  pinMode(LED_RED_PIN, OUTPUT);
+  setLedDefault();
+
   Serial.begin(115200);
   Serial.println("{\"status\":\"boot\",\"usbMode\":\"cdc\",\"transport\":\"serial\"}");
 

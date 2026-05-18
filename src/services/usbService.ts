@@ -1,15 +1,17 @@
 import { Platform } from "react-native";
-import {
-  Device,
-  Codes,
-  Parity,
-  UsbSerial,
-  UsbSerialManager,
-} from "react-native-usb-serialport-for-android";
+import type { Device, UsbSerial } from "react-native-usb-serialport-for-android";
+
+type UsbAndroidModule = typeof import("react-native-usb-serialport-for-android");
+
+function getUsbAndroidModule(): UsbAndroidModule {
+  ensureAndroid();
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require("react-native-usb-serialport-for-android") as UsbAndroidModule;
+}
 
 const DEFAULT_OPEN_OPTIONS = {
   baudRate: 115200,
-  parity: Parity.None,
+  parity: 0,
   dataBits: 8,
   stopBits: 1,
 } as const;
@@ -77,7 +79,7 @@ function hasCompleteCalibrationBlock(buffer: string) {
 }
 
 export async function listUsbDevices(): Promise<Device[]> {
-  ensureAndroid();
+  const { UsbSerialManager } = getUsbAndroidModule();
   return UsbSerialManager.list();
 }
 
@@ -100,7 +102,7 @@ export function describeUsbDevice(device: Device): string {
 }
 
 export async function requestUsbPermissionIfNeeded(device: Device): Promise<boolean> {
-  ensureAndroid();
+  const { UsbSerialManager } = getUsbAndroidModule();
 
   const hasPermission = await UsbSerialManager.hasPermission(device.deviceId);
   if (hasPermission) {
@@ -111,7 +113,7 @@ export async function requestUsbPermissionIfNeeded(device: Device): Promise<bool
 }
 
 export async function openUsbConnection(device: Device): Promise<UsbSerial> {
-  ensureAndroid();
+  const { Codes, UsbSerialManager } = getUsbAndroidModule();
 
   const granted = await requestUsbPermissionIfNeeded(device);
   if (!granted) {

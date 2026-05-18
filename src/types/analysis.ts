@@ -5,9 +5,11 @@
 
 
 export type PHClassification =
-  | "Low Acidic"
-  | "Moderate"
-  | "Highly Acidic";
+  | "Low Acidity"
+  | "Moderate Acidity"
+  | "High Acidity";
+
+export type FirmwareGuardBandLabel = "ACIDIC" | "NON_ACIDIC" | "UNCERTAIN";
 
 export type RiskLevel = "Low Risk" | "Moderate Risk" | "High Risk";
 export type BinaryAcidityLabel = "Acidic" | "Non-Acidic";
@@ -32,6 +34,7 @@ export interface SensorReading {
   ph: number;
   samplesCollected: number;
   stabilizationTimeSec: number;
+  firmwareLabel: FirmwareGuardBandLabel;
 }
 
 export interface AnalysisRecord {
@@ -48,6 +51,7 @@ export interface AnalysisRecord {
   averageVoltage?: number;
   samplesCollected?: number;
   sampleId?: string;
+  firmwareLabel?: FirmwareGuardBandLabel;
   title?: string;
   note?: string;
   stomachState?: "Empty stomach" | "After meal";
@@ -55,6 +59,30 @@ export interface AnalysisRecord {
   isNewCup?: boolean;
   riskLevel?: RiskLevel;
   narrative?: AnalysisNarrative;
+}
+
+export function normalizePHClassification(value?: string | null): PHClassification {
+  const normalized = (value ?? "").trim().toLowerCase();
+
+  if (
+    normalized === "high acidity" ||
+    normalized === "high_acidity" ||
+    normalized === "acidic"
+  ) {
+    return "High Acidity";
+  }
+
+  if (
+    normalized === "low acidity" ||
+    normalized === "low_acidity" ||
+    normalized === "non-acidic" ||
+    normalized === "non acidic" ||
+    normalized === "non_acidic"
+  ) {
+    return "Low Acidity";
+  }
+
+  return "Moderate Acidity";
 }
 
 // calculation of mV using nern's equation

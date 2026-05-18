@@ -29,12 +29,12 @@ import { buildRuleBasedNarrative } from "@/src/services/analysisService";
 import { shareAnalysisPdf } from "@/src/services/exportService";
 import { syncHistoryRecordToSupabase } from "@/src/services/historySync";
 import { getLatestCachedAnalysis, getLatestStoredAnalysis, getStoredAnalysisHistory, saveAnalysisRecord } from "@/src/store/analysisStore";
-import { AnalysisNarrative, AnalysisRecord } from "@/src/types/analysis";
+import { AnalysisNarrative, AnalysisRecord, normalizePHClassification } from "@/src/types/analysis";
 
 const CLASSIFICATION_COLORS = {
-  "Highly Acidic": { bg: "#FCDEDE", text: "#8C1A1A", badge: "#E74C3C" },
-  Moderate: { bg: "#FEF0D6", text: "#7A4A00", badge: "#F39C12" },
-  "Low Acidic": { bg: "#DCF0E4", text: "#1A5C34", badge: "#27AE60" },
+  "High Acidity": { bg: "#FCDEDE", text: "#8C1A1A", badge: "#E74C3C" },
+  "Moderate Acidity": { bg: "#FEF0D6", text: "#7A4A00", badge: "#F39C12" },
+  "Low Acidity": { bg: "#DCF0E4", text: "#1A5C34", badge: "#27AE60" },
 } as const;
 
 const RISK_COLORS = {
@@ -84,7 +84,7 @@ function getTipRows(item: AnalysisRecord, texts: string[]) {
       icon: "coffee-maker-outline",
       text:
         texts[3] ??
-        (item.classification === "Highly Acidic"
+        (item.classification === "High Acidity"
           ? "Switch to lower-acidity instant options or decaf"
           : "Avoid drinking coffee too quickly to reduce irritation"),
     },
@@ -599,9 +599,10 @@ export default function ResultsScreen() {
     await shareAnalysisPdf(latest);
   };
 
+  const normalizedClassification = latest ? normalizePHClassification(latest.classification) : "Moderate Acidity";
   const clsColor = latest
-    ? CLASSIFICATION_COLORS[latest.classification as keyof typeof CLASSIFICATION_COLORS] ?? CLASSIFICATION_COLORS.Moderate
-    : CLASSIFICATION_COLORS.Moderate;
+    ? CLASSIFICATION_COLORS[normalizedClassification as keyof typeof CLASSIFICATION_COLORS] ?? CLASSIFICATION_COLORS["Moderate Acidity"]
+    : CLASSIFICATION_COLORS["Moderate Acidity"];
   const riskColor = latest
     ? RISK_COLORS[latest.riskLevel as keyof typeof RISK_COLORS] ?? RISK_COLORS["Low Risk"]
     : RISK_COLORS["Low Risk"];
@@ -656,11 +657,6 @@ export default function ResultsScreen() {
       >
         <ThemedView style={r.header}>
           <View style={r.headerMiddle}>
-            <Image
-              source={require("../../assets/images/icon.png")}
-              style={r.headerLogo}
-              resizeMode="contain"
-            />
             <ThemedText
               style={r.title}
               lightColor={Colors.light.text}
@@ -705,7 +701,7 @@ export default function ResultsScreen() {
                     <View style={r.phRow}>
                       <ThemedText style={r.phText}>pH {latest.ph.toFixed(1)}</ThemedText>
                       <View style={[r.badge, { backgroundColor: clsColor.badge }]}>
-                        <ThemedText style={r.badgeText}>{latest.classification}</ThemedText>
+                        <ThemedText style={r.badgeText}>{normalizedClassification}</ThemedText>
                       </View>
                     </View>
                     <View style={[r.riskTag, { backgroundColor: riskColor.bg }]}>
@@ -752,11 +748,6 @@ export default function ResultsScreen() {
                 {latest.stomachState && (
                   <Tag label={latest.stomachState} bg="#F4EEEA" color="#8B6A55" />
                 )}
-                <Tag
-                  label={`${preferences.tastePreset} mode`}
-                  bg={preferences.tastePreset === "bold" ? "#E8D5C4" : "#F4EEEA"}
-                  color="#8B6A55"
-                />
               </View>
             </SectionCard>
 
@@ -1197,7 +1188,6 @@ const r = StyleSheet.create({
     justifyContent: "center",
   },
 
-  headerLogo: { width: 22, height: 22, marginBottom: 2 },
   card: {
     borderRadius: 20,
     borderWidth: 1,

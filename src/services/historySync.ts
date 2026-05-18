@@ -339,6 +339,10 @@ export async function flushQueuedHistorySync(): Promise<void> {
   }
 }
 
+export async function syncAllLocalUpdatesNow(): Promise<void> {
+  await flushQueuedHistorySync();
+}
+
 export async function pullHistoryFromSupabase(): Promise<AnalysisRecord[] | null> {
   try {
     const { data: userData, error: userError } = await supabase.auth.getUser();

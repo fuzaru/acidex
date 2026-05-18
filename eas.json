@@ -15,7 +15,23 @@
     },
     "preview": {
       "distribution": "internal",
+      "android": {
+        "gradleCommand": ":app:assembleDebug"
+      },
       "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://hfsvvkuuprnyjkatbeio.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_9LXNgPGG0WBz85-4e_I2rA_FoFOSmT0",
+        "EXPO_PUBLIC_ANALYSIS_LLM_FUNCTION_NAME": "analysis-llm"
+      }
+    },
+    "previewRelease": {
+      "distribution": "internal",
+      "android": {
+        "gradleCommand": ":app:assembleRelease"
+      },
+      "env": {
+        "ORG_GRADLE_PROJECT_android.enableMinifyInReleaseBuilds": "false",
+        "ORG_GRADLE_PROJECT_android.enableShrinkResourcesInReleaseBuilds": "false",
         "EXPO_PUBLIC_SUPABASE_URL": "https://hfsvvkuuprnyjkatbeio.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_9LXNgPGG0WBz85-4e_I2rA_FoFOSmT0",
         "EXPO_PUBLIC_ANALYSIS_LLM_FUNCTION_NAME": "analysis-llm"
@@ -24,6 +40,8 @@
     "production": {
       "autoIncrement": true,
       "env": {
+        "ORG_GRADLE_PROJECT_android.enableMinifyInReleaseBuilds": "false",
+        "ORG_GRADLE_PROJECT_android.enableShrinkResourcesInReleaseBuilds": "false",
         "EXPO_PUBLIC_SUPABASE_URL": "https://hfsvvkuuprnyjkatbeio.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_9LXNgPGG0WBz85-4e_I2rA_FoFOSmT0",
         "EXPO_PUBLIC_ANALYSIS_LLM_FUNCTION_NAME": "analysis-llm"

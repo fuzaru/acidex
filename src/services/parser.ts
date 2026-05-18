@@ -1,4 +1,4 @@
-import { SensorReading } from "../types/analysis";
+import { FirmwareGuardBandLabel, SensorReading } from "../types/analysis";
 
 export type CalibrationBuffer = "low" | "high";
 
@@ -31,14 +31,23 @@ export function parseArduinoResultBlock(raw: string): SensorReading | null {
       sample?: string;
       avgVoltage?: number;
       pH?: number;
+      label?: string;
       samplesCollected?: number;
       stabilizationTimeSec?: number;
     };
+
+    const firmwareLabel =
+      typeof parsed.label === "string" ? parsed.label.trim().toUpperCase() : "";
+    const isValidLabel =
+      firmwareLabel === "ACIDIC" ||
+      firmwareLabel === "NON_ACIDIC" ||
+      firmwareLabel === "UNCERTAIN";
 
     if (
       typeof parsed.sample === "string" &&
       typeof parsed.avgVoltage === "number" &&
       typeof parsed.pH === "number" &&
+      isValidLabel &&
       typeof parsed.samplesCollected === "number" &&
       typeof parsed.stabilizationTimeSec === "number" &&
       parsed.stabilizationTimeSec >= 0
@@ -49,6 +58,7 @@ export function parseArduinoResultBlock(raw: string): SensorReading | null {
         ph: parsed.pH,
         samplesCollected: parsed.samplesCollected,
         stabilizationTimeSec: parsed.stabilizationTimeSec,
+        firmwareLabel: firmwareLabel as FirmwareGuardBandLabel,
       };
     }
   } catch (error) {

@@ -2,7 +2,7 @@ import { ThemedText } from "@/components/themed-text";
 import Colors from "@/constants/colors";
 import { UserPreferencesStore } from "@/src/data/userPreferencesStore";
 import { getStoredAnalysisHistory } from "@/src/store/analysisStore";
-import { AnalysisRecord } from "@/src/types/analysis";
+import { AnalysisRecord, normalizePHClassification } from "@/src/types/analysis";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { Image } from "expo-image";
@@ -34,9 +34,9 @@ const FILTER_OPTIONS: FilterOption[] = [
 ];
 
 const CLASSIFICATION_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
-  "Highly Acidic": { bg: "#FCDEDE", text: "#8C1A1A", dot: "#E74C3C" },
-  "Moderate":      { bg: "#FEF0D6", text: "#7A4A00", dot: "#F39C12" },
-  "Low Acidic":    { bg: "#DCF0E4", text: "#1A5C34", dot: "#27AE60" },
+  "High Acidity":     { bg: "#FCDEDE", text: "#8C1A1A", dot: "#E74C3C" },
+  "Moderate Acidity": { bg: "#FEF0D6", text: "#7A4A00", dot: "#F39C12" },
+  "Low Acidity":      { bg: "#DCF0E4", text: "#1A5C34", dot: "#27AE60" },
 };
 
 const RISK_COLORS: Record<string, { bg: string; text: string }> = {
@@ -75,7 +75,10 @@ function getClassificationBreakdown(entries: AnalysisRecord[]) {
   const total = entries.length;
   if (!total) return [];
   const map: Record<string, number> = {};
-  entries.forEach((e) => (map[e.classification] = (map[e.classification] || 0) + 1));
+  entries.forEach((e) => {
+    const cls = normalizePHClassification(e.classification);
+    map[cls] = (map[cls] || 0) + 1;
+  });
   return Object.entries(map).map(([label, count]) => ({
     label,
     count,
@@ -104,13 +107,13 @@ function getSummaryInsights(entries: AnalysisRecord[]): string[] {
   const results = [];
 
   const acidic = entries.filter(
-    (e) => e.classification === "Moderate" || e.classification === "Highly Acidic"
+    (e) => e.classification === "Moderate Acidity" || e.classification === "High Acidity"
   );
   const pct  = Math.round((acidic.length / entries.length) * 100);
-  results.push(`${pct}% of your entries were "Moderate" or "Highly Acidic".`);
+  results.push(`${pct}% of your entries were "Moderate Acidity" or "High Acidity".`);
 
   const risk = entries.filter(
-    (e) => e.stomachState === "Empty stomach" && e.classification === "Highly Acidic"
+    (e) => e.stomachState === "Empty stomach" && e.classification === "High Acidity"
   ).length;
   results.push(`"Empty stomach" + high acidity showed ${risk} higher-risk log${risk !== 1 ? "s" : ""}.`);
 
@@ -206,7 +209,7 @@ function LineChart({ entries }: { entries: AnalysisRecord[] }) {
       minute: "2-digit",
     }),
     value: e.ph,
-    cls:   e.classification,
+    cls:   normalizePHClassification(e.classification),
   }));
 
   if (!data.length) {
@@ -613,11 +616,6 @@ export default function DashboardScreen() {
       {/* ── Header ── */}
       <View style={s.header}>
         <View style={s.headerMiddle}>
-          <Image
-            source={require("../../assets/images/icon.png")}
-            style={s.headerLogo}
-            resizeMode="contain"
-          />
           <ThemedText
             style={s.title}
             lightColor={Colors.light.text}
@@ -737,7 +735,7 @@ export default function DashboardScreen() {
             {([
               { label: latest.coffeeType,     type: "plain" },
               { label: `pH ${latest.ph}`,     type: "plain" },
-              { label: latest.classification, type: "cls"   },
+              { label: normalizePHClassification(latest.classification), type: "cls" },
               { label: latest.riskLevel,      type: "risk"  },
             ] as const).map((tag, i) => {
               let bg = "#F4EEEA", color = "#6F5A4F";
@@ -778,7 +776,6 @@ const s = StyleSheet.create({
     backgroundColor: Colors.light.background,
   },
   headerMiddle: { flex: 1, alignItems: "center", justifyContent: "center" },
-  headerLogo:   { width: 22, height: 22, marginBottom: 2 },
   title: {
     fontSize: 18,
     fontWeight: "700",

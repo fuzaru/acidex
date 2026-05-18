@@ -2,12 +2,13 @@
   "expo": {
     "name": "Acidex",
     "slug": "acidex",
+    "scheme": "acidex",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png", // This is your primary app icon
+    "icon": "./assets/images/icon.png",
     "userInterfaceStyle": "automatic",
     "splash": {
-      "image": "./assets/splash.png", // Assuming you have a splash screen image
+      "image": "./assets/images/icon.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
@@ -20,13 +21,18 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/icon.png", // Used for adaptive icons on Android 8.0+
-        "backgroundColor": "#ffffff" // Background color for the adaptive icon
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#ffffff"
       },
       "package": "com.acidex.app"
     },
     "web": {
-      "favicon": "./assets/favicon.png" // Assuming you have a favicon
+      "favicon": "./assets/images/icon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "6eb569c4-27bc-4594-9ee9-efc0670c3834"
+      }
     }
   }
 }

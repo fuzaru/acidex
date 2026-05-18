@@ -12,7 +12,7 @@ import {
   saveAnalysisRecord,
   setLastExpandedHistoryId
 } from "@/src/store/analysisStore";
-import { AnalysisRecord } from "@/src/types/analysis";
+import { AnalysisRecord, normalizePHClassification } from "@/src/types/analysis";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
@@ -33,9 +33,9 @@ import {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const CLASSIFICATION_COLORS: Record<string, { bg: string; text: string; badge: string }> = {
-  "Highly Acidic": { bg: "#FCDEDE", text: "#8C1A1A", badge: "#E74C3C" },
-  "Moderate":      { bg: "#FEF0D6", text: "#7A4A00", badge: "#F39C12" },
-  "Low Acidic":    { bg: "#DCF0E4", text: "#1A5C34", badge: "#27AE60" },
+  "High Acidity":     { bg: "#FCDEDE", text: "#8C1A1A", badge: "#E74C3C" },
+  "Moderate Acidity": { bg: "#FEF0D6", text: "#7A4A00", badge: "#F39C12" },
+  "Low Acidity":      { bg: "#DCF0E4", text: "#1A5C34", badge: "#27AE60" },
 };
 
 const RISK_COLORS: Record<string, { bg: string; text: string }> = {
@@ -452,11 +452,6 @@ export default function HistoryScreen() {
         {/* ── Header (unchanged) ── */}
         <ThemedView style={[s.header, { backgroundColor: Colors.light.background }]}>
           <View style={s.headerMiddle}>
-            <Image
-              source={require("../../assets/images/icon.png")}
-              style={s.headerLogo}
-              resizeMode="contain"
-            />
             <ThemedText style={[s.title, { color: coffee }]}>history.</ThemedText>
             <ThemedText style={s.subtitle}>your full analysis log</ThemedText>
           </View>
@@ -729,7 +724,8 @@ export default function HistoryScreen() {
 // ─── Collapsed Card ───────────────────────────────────────────────────────────
 
 function CollapsedCard({ item, onExpand, onDelete, onAddToCollection, onOpenResult, onBookmarkToast, isSelected, onSelect }: { item: AnalysisRecord; onExpand: () => void; onDelete: () => void; onAddToCollection: () => void; onOpenResult: () => void; onBookmarkToast: () => void; isSelected?: boolean; onSelect?: () => void }) {
-  const cls  = CLASSIFICATION_COLORS[item.classification] ?? CLASSIFICATION_COLORS["Moderate"];
+  const normalizedClassification = normalizePHClassification(item.classification);
+  const cls  = CLASSIFICATION_COLORS[normalizedClassification] ?? CLASSIFICATION_COLORS["Moderate Acidity"];
   const risk = RISK_COLORS[item.riskLevel ?? "Low Risk"]  ?? RISK_COLORS["Low Risk"];
 
   const [isBookmarked, setIsBookmarked] = useState<boolean>(BookmarkStore.isBookmarked(item.id));
@@ -792,7 +788,7 @@ function CollapsedCard({ item, onExpand, onDelete, onAddToCollection, onOpenResu
           <View style={s.nameBadgeRow}>
             <ThemedText style={s.coffeeName}>{item.coffeeType}</ThemedText>
             <View style={[s.badge, { backgroundColor: cls.badge }]}>
-              <ThemedText style={s.badgeText}>{item.classification}</ThemedText>
+              <ThemedText style={s.badgeText}>{normalizedClassification}</ThemedText>
             </View>
           </View>
 
@@ -840,7 +836,8 @@ function ExpandedCard({
   isSelected?: boolean;
   onSelect?: () => void;
 }) {
-  const cls  = CLASSIFICATION_COLORS[item.classification] ?? CLASSIFICATION_COLORS["Moderate"];
+  const normalizedClassification = normalizePHClassification(item.classification);
+  const cls  = CLASSIFICATION_COLORS[normalizedClassification] ?? CLASSIFICATION_COLORS["Moderate Acidity"];
   const risk = RISK_COLORS[item.riskLevel ?? "Low Risk"]  ?? RISK_COLORS["Low Risk"];
 
   const [isBookmarked, setIsBookmarked] = useState<boolean>(BookmarkStore.isBookmarked(item.id));
@@ -919,7 +916,7 @@ function ExpandedCard({
           <View style={s.expandedPhRow}>
             <ThemedText style={s.expandedPh}>pH {item.ph.toFixed(1)}</ThemedText>
             <View style={[s.badge, { backgroundColor: cls.badge }]}>
-              <ThemedText style={s.badgeText}>{item.classification}</ThemedText>
+              <ThemedText style={s.badgeText}>{normalizedClassification}</ThemedText>
             </View>
             {item.riskLevel && (
               <View style={[s.riskPill, { backgroundColor: risk.bg }]}>
@@ -976,7 +973,6 @@ const s = StyleSheet.create({
     paddingHorizontal: 16, paddingTop: 50, paddingBottom: 14,
   },
   headerMiddle: { flex: 1.6, alignItems: "center", justifyContent: "center" },
-  headerLogo:   { width: 22, height: 22, marginBottom: 2 },
   title:        { fontSize: 18, fontWeight: "700", lineHeight: 20, textAlign: "center", paddingTop: 1 },
   subtitle:     { fontSize: 12, opacity: 0.6, textAlign: "center" },
 

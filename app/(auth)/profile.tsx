@@ -10,7 +10,7 @@ import { ThemedView } from "@/components/themed-view";
 import Colors from "@/constants/colors";
 import { useThemeColor } from "@/hooks/use-theme-color";
 import { getStoredThemeMode, saveThemeMode } from "@/src/data/themeStore";
-import { TastePreset, UserPreferences, UserPreferencesStore } from "@/src/data/userPreferencesStore";
+import { UserPreferences, UserPreferencesStore } from "@/src/data/userPreferencesStore";
 import { loadSyncStatus, subscribeSyncStatus, syncAllLocalUpdatesNow, SyncStatus } from "@/src/services/historySync";
 
 const DEFAULT_AVATARS = [
@@ -255,6 +255,7 @@ export default function ProfileScreen() {
                     ? `last synced ${new Date(syncStatus.lastSyncedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
                     : "all changes synced"
                 }
+                onPress={() => void handleSyncNow()}
                 trailing={
                   <TouchableOpacity onPress={() => void handleSyncNow()} activeOpacity={0.8} style={styles.syncButton}>
                     <ThemedText style={styles.syncButtonText}>
@@ -292,32 +293,6 @@ export default function ProfileScreen() {
                 <ThemedText style={styles.modalSubtitle}>
                   Automatic reminders stay on unless you turn them off.
                 </ThemedText>
-              </View>
-
-              <View style={styles.modalSection}>
-                <ThemedText style={styles.sectionLabel}>taste preset</ThemedText>
-                <View style={styles.presetRow}>
-                  {([
-                    { key: "gentle", label: "Gentle" },
-                    { key: "balanced", label: "Balanced" },
-                    { key: "bold", label: "Bold" },
-                    { key: "custom", label: "Custom" },
-                  ] as { key: TastePreset; label: string }[]).map((item) => {
-                    const active = preferences.tastePreset === item.key;
-                    return (
-                      <TouchableOpacity
-                        key={item.key}
-                        activeOpacity={0.8}
-                        onPress={() => updatePreferences({ tastePreset: item.key })}
-                        style={[styles.presetChip, active && styles.presetChipActive]}
-                      >
-                        <ThemedText style={[styles.presetChipText, active && styles.presetChipTextActive]}>
-                          {item.label}
-                        </ThemedText>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
               </View>
 
               <View style={styles.modalSection}>
@@ -547,28 +522,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
     color: "#8B6A55",
     marginBottom: 10,
-  },
-  presetRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-  presetChip: {
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 999,
-    backgroundColor: "#F4EEEA",
-  },
-  presetChipActive: {
-    backgroundColor: "#4A3728",
-  },
-  presetChipText: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#7A675C",
-  },
-  presetChipTextActive: {
-    color: "#FFF",
   },
   toggleRow: {
     flexDirection: "row",

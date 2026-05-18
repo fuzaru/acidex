@@ -3,7 +3,7 @@ import {
   AnalysisNarrative,
   AnalysisRecord,
   BinaryAcidityLabel,
-  MlModelKey,
+  FirmwareGuardBandLabel,
   PHClassification,
   RiskLevel,
   SensorReading,
@@ -35,21 +35,11 @@ export interface ClassificationMetrics extends ConfusionMatrix {
   total: number;
 }
 
-export interface BinaryClassificationResult {
-  label: BinaryAcidityLabel;
-  confidence: number;
-  modelKey: MlModelKey;
-  modelName: string;
-}
-
 export interface ModelEvaluationResult {
-  key: MlModelKey;
+  key: string;
   name: string;
   metrics: ClassificationMetrics;
 }
-
-const DECISION_STUMP_MODEL_KEY: MlModelKey = "decision_stump";
-const DECISION_STUMP_MODEL_NAME = "Decision Stump (coffee.csv)";
 
 function sortNewestFirst(records: AnalysisRecord[]) {
   return [...records].sort(
@@ -72,19 +62,12 @@ export function buildRuleBasedNarrative(
     "coffeeType" | "ph" | "classification" | "riskLevel" | "stomachState" | "cupsToday"
   >
 ): AnalysisNarrative {
-  const acidityDescriptor =
-    item.classification === "Highly Acidic"
-      ? "high acidity coffee"
-      : item.classification === "Moderate"
-        ? "moderate acidity coffee"
-        : "lower acidity coffee";
-
   const summary =
-    item.classification === "Highly Acidic"
+    item.classification === "High Acidity"
       ? `Your ${item.coffeeType.toLowerCase()} tested as highly acidic, which may trigger gastric discomfort.`
-      : item.classification === "Moderate"
+      : item.classification === "Moderate Acidity"
         ? `Your ${item.coffeeType.toLowerCase()} tested as moderately acidic and may cause some discomfort depending on timing.`
-        : `Your ${item.coffeeType.toLowerCase()} tested as low acidic and is generally gentler on the stomach.`;
+      : `Your ${item.coffeeType.toLowerCase()} tested as low acidic and is generally gentler on the stomach.`;
 
   const likelyEffectTitle =
     item.riskLevel === "High Risk"
@@ -103,17 +86,19 @@ export function buildRuleBasedNarrative(
   }
 
   const advisory =
-    item.riskLevel === "High Risk"
-      ? "Consider reducing intake or drinking after meals to minimize gastric discomfort."
-      : item.riskLevel === "Moderate Risk"
-        ? "Try improving timing and hydration to lessen possible irritation."
-        : "Current result suggests lower discomfort risk, but moderation is still recommended.";
+    item.classification === "Moderate Acidity"
+      ? "This coffee's pH is near the typical range. Most people can enjoy it without issues. If you have acid sensitivity, consume moderately."
+      : item.riskLevel === "High Risk"
+        ? "Consider reducing intake or drinking after meals to minimize gastric discomfort."
+        : item.riskLevel === "Moderate Risk"
+          ? "Try improving timing and hydration to lessen possible irritation."
+          : "Current result suggests lower discomfort risk, but moderation is still recommended.";
 
   const tips = [
     "Have coffee after meals whenever possible",
     "Stay hydrated: drink water alongside coffee",
     "Limit intake: keep it to 1-2 cups per day",
-    item.classification === "Highly Acidic"
+    item.classification === "High Acidity"
       ? "Switch to lower-acidity instant brands or decaf"
       : "Avoid drinking coffee too quickly to reduce irritation",
   ];
@@ -126,8 +111,8 @@ export function buildRuleBasedNarrative(
   const impactItems = [];
   
   const acidityLabel = 
-    item.classification === "Highly Acidic" ? "High acidity concentration" :
-    item.classification === "Moderate" ? "Moderate acidity level" :
+    item.classification === "High Acidity" ? "High acidity concentration" :
+    item.classification === "Moderate Acidity" ? "Moderate acidity level" :
     "Lower acidity concentration";
 
   impactItems.push(`${acidityLabel} (pH ${item.ph.toFixed(2)})`);
@@ -152,10 +137,12 @@ export function buildRuleBasedNarrative(
   };
 }
 
-export function classifyPhBand(ph: number): PHClassification {
-  if (ph < 4.7) return "Highly Acidic";
-  if (ph < 5.3) return "Moderate";
-  return "Low Acidic";
+export function mapFirmwareLabelToClassification(
+  firmwareLabel: FirmwareGuardBandLabel
+): PHClassification {
+  if (firmwareLabel === "ACIDIC") return "High Acidity";
+  if (firmwareLabel === "NON_ACIDIC") return "Low Acidity";
+  return "Moderate Acidity";
 }
 
 export function classifyRiskLevel(
@@ -176,39 +163,10 @@ export function classifyRiskLevel(
   return "Low Risk";
 }
 
-type DecisionStumpModel = {
-  threshold: number;
-  leftAcidicProbability: number;
-  rightAcidicProbability: number;
-};
-
-// Trained offline from `coffee.csv` using `prototype_pH` only.
-// Script: `node scripts/train-decision-stump-from-coffee-csv.js`
-const COFFEE_CSV_DECISION_STUMP_MODEL: DecisionStumpModel = {
-  threshold: 5.035,
-  leftAcidicProbability: 0.9666666666666667,
-  rightAcidicProbability: 0,
-};
-
-function predictWithDecisionStump(
-  reading: Pick<SensorReading, "ph" | "stabilizationTimeSec">,
-  model: DecisionStumpModel
-): BinaryClassificationResult {
-  const acidicProbability =
-    reading.ph <= model.threshold ? model.leftAcidicProbability : model.rightAcidicProbability;
-
-  return {
-    label: acidicProbability >= 0.5 ? "Acidic" : "Non-Acidic",
-    confidence: Math.max(acidicProbability, 1 - acidicProbability),
-    modelKey: DECISION_STUMP_MODEL_KEY,
-    modelName: DECISION_STUMP_MODEL_NAME,
-  };
-}
-
-export function classifyBinaryAcidity(
-  reading: Pick<SensorReading, "ph" | "stabilizationTimeSec">
-) {
-  return predictWithDecisionStump(reading, COFFEE_CSV_DECISION_STUMP_MODEL);
+export function mapFirmwareLabelToBinaryAcidity(
+  firmwareLabel: FirmwareGuardBandLabel
+): BinaryAcidityLabel {
+  return firmwareLabel === "ACIDIC" ? "Acidic" : "Non-Acidic";
 }
 
 export function buildAnalysisRecord(
@@ -221,11 +179,11 @@ export function buildAnalysisRecord(
     cupsToday?: number;
   }
 ): AnalysisRecord {
-  const classification = classifyPhBand(reading.ph);
+  const classification = mapFirmwareLabelToClassification(reading.firmwareLabel);
   const stomachState = options?.stomachState ?? "After meal";
-  const binary = classifyBinaryAcidity(reading);
+  const binaryLabel = mapFirmwareLabelToBinaryAcidity(reading.firmwareLabel);
   const coffeeType = options?.coffeeType ?? `Sample ${reading.sampleId}`;
-  const riskLevel = classifyRiskLevel(binary.label, stomachState);
+  const riskLevel = classifyRiskLevel(binaryLabel, stomachState);
   const isNewCup = options?.isNewCup ?? true;
   const cupsToday = options?.cupsToday ?? 1;
 
@@ -235,14 +193,12 @@ export function buildAnalysisRecord(
     coffeeType,
     ph: roundTo3(reading.ph),
     classification,
-    binaryLabel: binary.label,
-    mlConfidence: binary.confidence,
-    mlModelKey: binary.modelKey,
-    mlModelName: binary.modelName,
+    binaryLabel,
     stabilizationTimeSec: reading.stabilizationTimeSec,
     averageVoltage: reading.averageVoltage,
     samplesCollected: reading.samplesCollected,
     sampleId: reading.sampleId,
+    firmwareLabel: reading.firmwareLabel,
     note: options?.note,
     stomachState,
     cupsToday,
@@ -307,11 +263,11 @@ export function getSummaryInsights(): string[] {
 
   const moderateOrHigh = entries.filter(
     (item) =>
-      item.classification === "Moderate" ||
-      item.classification === "Highly Acidic"
+      item.classification === "Moderate Acidity" ||
+      item.classification === "High Acidity"
   ).length;
   const percent = total ? roundTo1((moderateOrHigh / total) * 100) : 0;
-  results.push(`${percent}% of your entries were "Moderate" or "Highly Acidic".`);
+  results.push(`${percent}% of your entries were "Moderate Acidity" or "High Acidity".`);
 
   const emptyHighRisk = entries.filter(
     (item) =>
