@@ -1,7 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { AnalysisRecord } from "@/src/types/analysis";
+import { AnalysisRecord, normalizePHClassification } from "@/src/types/analysis";
 
 type HistoryRow = {
   id: string;
@@ -27,13 +27,20 @@ type HistoryRow = {
   is_bookmarked: boolean;
 };
 
+function toDbClassification(value: AnalysisRecord["classification"]): string {
+  const normalized = normalizePHClassification(value);
+  if (normalized === "High Acidity") return "Highly Acidic";
+  if (normalized === "Low Acidity") return "Low Acidic";
+  return "Moderate";
+}
+
 function toAnalysisRecord(row: HistoryRow): AnalysisRecord {
   return {
     id: row.id,
     createdAt: row.created_at,
     coffeeType: row.coffee_type,
     ph: row.ph,
-    classification: row.classification,
+    classification: normalizePHClassification(row.classification),
     binaryLabel: row.binary_label ?? undefined,
     mlConfidence: row.ml_confidence ?? undefined,
     mlModelKey: row.ml_model_key ?? undefined,
@@ -139,7 +146,7 @@ function toHistoryRow(record: AnalysisRecord, profileId: string, isBookmarked: b
     created_at: record.createdAt,
     coffee_type: record.coffeeType,
     ph: record.ph,
-    classification: record.classification,
+    classification: toDbClassification(record.classification) as AnalysisRecord["classification"],
     binary_label: record.binaryLabel ?? null,
     ml_confidence: record.mlConfidence ?? null,
     ml_model_key: record.mlModelKey ?? null,

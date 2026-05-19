@@ -173,6 +173,37 @@ export async function deleteAnalysisRecord(recordId: string): Promise<void> {
   }
 }
 
+export async function deleteAnalysisRecords(recordIds: string[]): Promise<void> {
+  if (!recordIds.length) return;
+  const idsToDelete = new Set(recordIds);
+
+  try {
+    const scopeId = await getUserScopeId();
+    await maybeMigrateLegacyAnalysisKeys(scopeId);
+    const historyRaw = await AsyncStorage.getItem(scopedKey(ANALYSIS_HISTORY_KEY, scopeId));
+    const history = historyRaw ? (JSON.parse(historyRaw) as AnalysisRecord[]) : [];
+    const nextHistory = history.filter((item) => !idsToDelete.has(item.id));
+
+    const latestRaw = await AsyncStorage.getItem(scopedKey(LATEST_ANALYSIS_KEY, scopeId));
+    const latest = latestRaw ? (JSON.parse(latestRaw) as AnalysisRecord) : null;
+    const nextLatest = latest && idsToDelete.has(latest.id) ? (nextHistory[0] ?? null) : latest;
+
+    latestAnalysisCacheByScope[scopeId] = nextLatest;
+    latestAnalysisCacheByScope[ANON_SCOPE] = nextLatest;
+
+    await AsyncStorage.multiSet([
+      [scopedKey(LATEST_ANALYSIS_KEY, scopeId), JSON.stringify(nextLatest)],
+      [scopedKey(ANALYSIS_HISTORY_KEY, scopeId), JSON.stringify(nextHistory)],
+    ]);
+
+    recordIds.forEach((id) => {
+      void syncHistoryDeletionToSupabase(id);
+    });
+  } catch (error) {
+    console.log("deleteAnalysisRecords error:", error);
+  }
+}
+
 export function getLastExpandedHistoryId(): string | null {
   return lastExpandedHistoryId;
 }

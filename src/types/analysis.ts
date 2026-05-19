@@ -67,7 +67,9 @@ export function normalizePHClassification(value?: string | null): PHClassificati
   if (
     normalized === "high acidity" ||
     normalized === "high_acidity" ||
-    normalized === "acidic"
+    normalized === "acidic" ||
+    normalized === "highly acidic" ||
+    normalized === "highly_acidic"
   ) {
     return "High Acidity";
   }
@@ -75,6 +77,8 @@ export function normalizePHClassification(value?: string | null): PHClassificati
   if (
     normalized === "low acidity" ||
     normalized === "low_acidity" ||
+    normalized === "low acidic" ||
+    normalized === "low_acidic" ||
     normalized === "non-acidic" ||
     normalized === "non acidic" ||
     normalized === "non_acidic"

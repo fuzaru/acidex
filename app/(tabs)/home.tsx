@@ -187,6 +187,15 @@ const ANALYZE_STAGE_HINTS: Record<ArduinoReadStage | "persisting" | "llm", strin
 const STREAK_COUNT_KEY      = "acidex_streak_count";
 const LAST_ANALYSIS_DATE_KEY = "acidex_last_analysis_date";
 
+function isAnalysisCancelledErrorMessage(message: string) {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("analysis cancelled") ||
+    lower.includes("analysis canceled") ||
+    lower.includes("device disconnected")
+  );
+}
+
 export default function HomeScreen() {
   const router       = useRouter();
   const flatListRef  = useRef<FlatList<FactType>>(null);
@@ -501,9 +510,24 @@ export default function HomeScreen() {
       // otherwise the useEffect below will catch it when they tap
     } catch (error) {
       console.log("analysis error:", error);
-      setAnalyzeError(
-        error instanceof Error ? error.message : "Failed to read the OTG device."
-      );
+      const defaultMessage = "Failed to read the OTG device.";
+      const rawMessage = error instanceof Error ? error.message : defaultMessage;
+
+      let resolvedMessage = rawMessage;
+      if (isAnalysisCancelledErrorMessage(rawMessage)) {
+        resolvedMessage = "Device disconnected. Analysis cancelled.";
+      } else if (analyzeStatus === "analyzing") {
+        try {
+          const stillConnected = await hasUsbDevice();
+          if (!stillConnected) {
+            resolvedMessage = "Device disconnected. Analysis cancelled.";
+          }
+        } catch {
+          // Keep original error text if USB status probe fails.
+        }
+      }
+
+      setAnalyzeError(resolvedMessage);
       setAnalyzeStatus("error");
     }
   };
@@ -527,6 +551,7 @@ export default function HomeScreen() {
         riskLevel: nextRiskLevel,
         stomachState,
         cupsToday: Number(cupsTodayInput) || 1,
+        firmwareLabel: pendingRecord.firmwareLabel,
       }),
     };
 

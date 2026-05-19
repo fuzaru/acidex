@@ -5,6 +5,7 @@ struct AutoMeasureResult {
   float avgVoltage;
   int samplesCollected;
   int stabilizationTimeSec;
+  bool cancelled;
 };
 
 #ifdef ESP32
@@ -179,6 +180,14 @@ void setLedDefault() {
   digitalWrite(LED_RED_PIN, HIGH);
 }
 
+bool isTransportConnected() {
+#ifdef ESP32
+  return static_cast<bool>(SERIAL_PORT) && SERIAL_PORT.dtr();
+#else
+  return static_cast<bool>(SERIAL_PORT);
+#endif
+}
+
 void blinkLedDoneThenDefault(unsigned long durationMs = 2000UL) {
   unsigned long start = millis();
   bool ledOn = true;
@@ -223,6 +232,7 @@ AutoMeasureResult measureAutoStable() {
   out.avgVoltage = NAN;
   out.samplesCollected = 0;
   out.stabilizationTimeSec = 0;
+  out.cancelled = false;
 
   float window[STABILITY_WINDOW] = {0};
   int windIdx = 0;
@@ -236,6 +246,13 @@ AutoMeasureResult measureAutoStable() {
   digitalWrite(LED_RED_PIN, HIGH);
 
   while (true) {
+    if (!isTransportConnected()) {
+      out.cancelled = true;
+      Serial.println("{\"status\":\"analysis_cancelled\",\"reason\":\"usb_disconnected\"}");
+      setLedDefault();
+      return out;
+    }
+
     float v = readVoltage();
 
     if (millis() - lastBlinkMs >= LED_FAST_BLINK_MS) {
@@ -275,6 +292,12 @@ AutoMeasureResult measureAutoStable() {
           int n = 0;
           unsigned long endAvg = millis() + static_cast<unsigned long>(COLLECT_SEC) * 1000UL;
           while (millis() < endAvg) {
+            if (!isTransportConnected()) {
+              out.cancelled = true;
+              Serial.println("{\"status\":\"analysis_cancelled\",\"reason\":\"usb_disconnected\"}");
+              setLedDefault();
+              return out;
+            }
             sum += readVoltage();
             n++;
             delay(50);
@@ -297,6 +320,12 @@ AutoMeasureResult measureAutoStable() {
       int n = 0;
       unsigned long endAvg = millis() + static_cast<unsigned long>(COLLECT_SEC) * 1000UL;
       while (millis() < endAvg) {
+        if (!isTransportConnected()) {
+          out.cancelled = true;
+          Serial.println("{\"status\":\"analysis_cancelled\",\"reason\":\"usb_disconnected\"}");
+          setLedDefault();
+          return out;
+        }
         sum += readVoltage();
         n++;
         delay(50);
@@ -326,6 +355,7 @@ void handleCalBuffer(const char *bufferName) {
   }
 
   AutoMeasureResult m = measureAutoStable();
+  if (m.cancelled) return;
 
   float ph = NAN;
   if (!isnan(m.avgVoltage) && slope != 0.0f && !isnan(slope) && !isnan(intercept)) {
@@ -409,6 +439,7 @@ void handleMeasure(const String &cmd) {
   Serial.println("{\"status\":\"ready\"}");
 
   AutoMeasureResult m = measureAutoStable();
+  if (m.cancelled) return;
   float pH = voltageToPH(m.avgVoltage);
   String label = classifyPH(pH);
 

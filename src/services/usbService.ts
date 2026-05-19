@@ -78,6 +78,18 @@ function hasCompleteCalibrationBlock(buffer: string) {
   return buffer.includes("CAL_JSON:") || buffer.includes("CAL_UPDATED_JSON:") || buffer.includes("CAL_CURRENT_JSON:");
 }
 
+function getCancellationReason(buffer: string): string | null {
+  if (!buffer.includes('"status":"analysis_cancelled"')) {
+    return null;
+  }
+
+  if (buffer.includes('"reason":"usb_disconnected"')) {
+    return "Device disconnected. Analysis cancelled.";
+  }
+
+  return "Analysis cancelled by device.";
+}
+
 export async function listUsbDevices(): Promise<Device[]> {
   const { UsbSerialManager } = getUsbAndroidModule();
   return UsbSerialManager.list();
@@ -247,6 +259,12 @@ export async function waitForArduinoResult(
           message: "Arduino started collecting the final sample window.",
           rawChunk: chunk,
         });
+      }
+
+      const cancellationReason = getCancellationReason(buffer);
+      if (cancellationReason) {
+        finish("reject", new Error(cancellationReason));
+        return;
       }
 
       const complete =

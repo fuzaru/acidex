@@ -516,6 +516,7 @@ export default function ResultsScreen() {
         riskLevel: nextRiskLevel,
         stomachState: latest.stomachState,
         cupsToday: nextCupsToday,
+        firmwareLabel: latest.firmwareLabel,
       }),
     };
 

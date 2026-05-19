@@ -6,11 +6,12 @@ import { BookmarkStore } from "@/src/data/bookmarkStore";
 import { CollectionStore } from "@/src/data/collectionStore";
 import { syncHistoryRecordToSupabase } from "@/src/services/historySync";
 import {
-  deleteAnalysisRecord,
-  getLastExpandedHistoryId,
-  getStoredAnalysisHistory,
-  saveAnalysisRecord,
-  setLastExpandedHistoryId
+    deleteAnalysisRecord,
+    deleteAnalysisRecords,
+    getLastExpandedHistoryId,
+    getStoredAnalysisHistory,
+    saveAnalysisRecord,
+    setLastExpandedHistoryId
 } from "@/src/store/analysisStore";
 import { AnalysisRecord, normalizePHClassification } from "@/src/types/analysis";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
@@ -18,16 +19,15 @@ import { useFocusEffect } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Animated,
-  Image,
-  Modal,
-  Pressable,
-  ScrollView,
-  Share,
-  StyleSheet,
-  TextInput,
-  TouchableOpacity,
-  View
+    Animated,
+    Modal,
+    Pressable,
+    ScrollView,
+    Share,
+    StyleSheet,
+    TextInput,
+    TouchableOpacity,
+    View
 } from "react-native";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -435,8 +435,8 @@ export default function HistoryScreen() {
     showToast("delete");
 
     // 2. Background batch deletion
+    deleteAnalysisRecords(idsToDelete).catch(err => console.log("Background multi-delete error:", err));
     idsToDelete.forEach(id => {
-      deleteAnalysisRecord(id).catch(err => console.log("Background multi-delete error:", err));
       CollectionStore.removeRecordFromAll(id);
       BookmarkStore.remove(id);
     });

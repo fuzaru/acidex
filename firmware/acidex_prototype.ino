@@ -46,12 +46,14 @@ static const float ADS_LSB_V = 0.000125f;
 static const int LED_RED_PIN = 12;
 static const unsigned long LED_FAST_BLINK_MS = 250UL;
 static const unsigned long LED_SLOW_BLINK_MS = 600UL;
+static const unsigned long I2C_INIT_RETRY_MS = 120UL;
+static const uint8_t ADS1115_ADDRS[] = { 0x48, 0x49, 0x4A, 0x4B };
 
 // ================================================
 // ========== STABILITY PARAMETERS ===============
 // ================================================
 #define STABILITY_WINDOW 5
-#define STABILITY_THRESHOLD_V 0.003f
+#define STABILITY_THRESHOLD_V 0.002f
 #define STABLE_HOLD_SEC 5
 #define COLLECT_SEC 5
 #define MEASURE_TIMEOUT_SEC 30
@@ -60,10 +62,9 @@ static const unsigned long LED_SLOW_BLINK_MS = 600UL;
 // ================================================
 // ========== CLASSIFICATION BOUNDARIES ===========
 // ================================================
-// Decision-stump threshold learned from coffee.csv
-#define ACIDIC_THRESHOLD 5.035f
-#define GUARD_LOW 4.85f
-#define GUARD_HIGH 5.15f
+float acidicThreshold = 5.035f;
+float guardLow = 4.85f;
+float guardHigh = 5.15f;
 
 // ================================================
 // ========== HELPER FUNCTIONS ====================
@@ -92,13 +93,18 @@ float calculateStd(float arr[], int size) {
 
 String classifyPH(float ph) {
   // Guard band around the threshold: treat near-boundary values as uncertain.
-  if (ph < ACIDIC_THRESHOLD && ph < GUARD_LOW) return "ACIDIC";
-  if (ph > ACIDIC_THRESHOLD && ph > GUARD_HIGH) return "NON_ACIDIC";
+  if (ph < acidicThreshold && ph < guardLow) return "ACIDIC";
+  if (ph > acidicThreshold && ph > guardHigh) return "NON_ACIDIC";
   return "UNCERTAIN";
 }
 
 void setLedDefault() {
   digitalWrite(LED_RED_PIN, HIGH);
+}
+
+bool isTransportConnected() {
+  // On ESP32 native USB CDC, the boolean operator already checks the DTR signal.
+  return (bool)SERIAL_PORT;
 }
 
 void blinkLedDoneThenDefault(unsigned long durationMs = 2000UL) {
@@ -115,11 +121,36 @@ void blinkLedDoneThenDefault(unsigned long durationMs = 2000UL) {
   setLedDefault();
 }
 
+void recoverI2CBus() {
+  pinMode(I2C_SCL_PIN, OUTPUT_OPEN_DRAIN);
+  pinMode(I2C_SDA_PIN, INPUT_PULLUP);
+  for (int i = 0; i < 9; i++) {
+    digitalWrite(I2C_SCL_PIN, HIGH);
+    delayMicroseconds(5);
+    digitalWrite(I2C_SCL_PIN, LOW);
+    delayMicroseconds(5);
+  }
+  digitalWrite(I2C_SCL_PIN, HIGH);
+  delayMicroseconds(5);
+}
+
+uint8_t scanAdsAddress() {
+  for (uint8_t i = 0; i < sizeof(ADS1115_ADDRS); i++) {
+    const uint8_t addr = ADS1115_ADDRS[i];
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) {
+      return addr;
+    }
+  }
+  return 0;
+}
+
 AutoMeasureResult measureAutoStable() {
   AutoMeasureResult out;
   out.avgVoltage = NAN;
   out.samplesCollected = 0;
   out.stabilizationTimeSec = 0;
+  out.cancelled = false;
 
   float window[STABILITY_WINDOW] = {0};
   int windIdx = 0;
@@ -133,6 +164,13 @@ AutoMeasureResult measureAutoStable() {
   digitalWrite(LED_RED_PIN, HIGH);
 
   while (true) {
+    if (!isTransportConnected()) {
+      out.cancelled = true;
+      Serial.println("{\"status\":\"analysis_cancelled\",\"reason\":\"usb_disconnected\"}");
+      setLedDefault();
+      return out;
+    }
+
     float v = readVoltage();
 
     if (millis() - lastBlinkMs >= LED_FAST_BLINK_MS) {
@@ -174,6 +212,12 @@ AutoMeasureResult measureAutoStable() {
           int n = 0;
           unsigned long endAvg = millis() + (unsigned long)COLLECT_SEC * 1000UL;
           while (millis() < endAvg) {
+            if (!isTransportConnected()) {
+              out.cancelled = true;
+              Serial.println("{\"status\":\"analysis_cancelled\",\"reason\":\"usb_disconnected\"}");
+              setLedDefault();
+              return out;
+            }
             sum += readVoltage();
             n++;
             delay(50);
@@ -196,6 +240,12 @@ AutoMeasureResult measureAutoStable() {
       int n = 0;
       unsigned long endAvg = millis() + (unsigned long)COLLECT_SEC * 1000UL;
       while (millis() < endAvg) {
+        if (!isTransportConnected()) {
+          out.cancelled = true;
+          Serial.println("{\"status\":\"analysis_cancelled\",\"reason\":\"usb_disconnected\"}");
+          setLedDefault();
+          return out;
+        }
         sum += readVoltage();
         n++;
         delay(50);
@@ -223,6 +273,7 @@ void handleCalBuffer(const char *bufferName) {
   }
 
   AutoMeasureResult m = measureAutoStable();
+  if (m.cancelled) return;
 
   float ph = NAN;
   if (!isnan(m.avgVoltage) && slope != 0.0f && !isnan(slope) && !isnan(intercept)) {
@@ -305,6 +356,7 @@ void handleMeasure(const String &cmd) {
   Serial.println("{\"status\":\"ready\"}");
 
   AutoMeasureResult m = measureAutoStable();
+  if (m.cancelled) return;
   float pH = voltageToPH(m.avgVoltage);
   String label = classifyPH(pH);
 
@@ -375,12 +427,29 @@ void setup() {
   // I2C init
 #ifdef ESP32
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  Wire.setClock(100000);
 #else
   Wire.begin();
 #endif
 
-  if (!ads.begin(0x48, &Wire)) {
-    delay(1000);
+  recoverI2CBus();
+
+  uint8_t adsAddr = scanAdsAddress();
+  bool adsReady = false;
+  for (int attempt = 0; attempt < 5 && !adsReady; attempt++) {
+    if (adsAddr == 0) {
+      adsAddr = scanAdsAddress();
+    }
+    if (adsAddr != 0) {
+      adsReady = ads.begin(adsAddr, &Wire);
+    }
+    if (!adsReady) {
+      delay(I2C_INIT_RETRY_MS);
+      recoverI2CBus();
+    }
+  }
+
+  if (!adsReady) {
     Serial.println("{\"error\":\"ads1115_not_found\"}");
     while (1) {
       delay(1000);

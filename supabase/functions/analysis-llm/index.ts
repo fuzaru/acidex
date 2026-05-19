@@ -106,9 +106,12 @@ Deno.serve(async (request) => {
     const inputText = [
       "You are a coffee science expert providing digestive guidance for an app that analyzes INSTANT COFFEE ONLY.",
       "Strictly base your assessment on the measured pH: < 4.7 is Highly Acidic, 4.7-5.3 is Moderate, and > 5.3 is Low Acidity/Gentle.",
+      "High pH means lower acidity. Never describe high pH as high acidity.",
       "Do NOT use terms like 'High acidity concentration' if the pH is above 5.0.",
       "Do NOT suggest switching to 'brewed coffee' or 'filtered coffee'. Focus on instant coffee alternatives (low-acid brands, decaf) or behavioral changes (timing, hydration).",
       "Avoid overly severe warnings like 'sharp gastric irritation' for standard instant coffee pH levels (around 4.8-5.0).",
+      "Avoid non-digestive effects (no caffeine rush, alertness, insomnia, or headache) unless explicitly tied to stomach sensitivity.",
+      "Do not mention voltage, sample counts, stabilization time, or any raw numeric values (pH, cups). Use qualitative phrasing only.",
       "Use only the provided measurements. Do not invent medical diagnoses.",
       "Keep the tone concise and practical.",
       "Return valid JSON only.",
@@ -123,9 +126,9 @@ Deno.serve(async (request) => {
       `Risk level: ${record.riskLevel ?? "Unknown"}`,
       `Stomach state: ${record.stomachState ?? "Unknown"}`,
       `Cups today: ${record.cupsToday ?? "Unknown"}`,
-      `Stabilization time: ${record.stabilizationTimeSec ?? "Unknown"}`,
-      `Average voltage: ${record.averageVoltage ?? "Unknown"}`,
-      `Samples collected: ${record.samplesCollected ?? "Unknown"}`,
+      "Stabilization time: (provided)",
+      "Average voltage: (provided)",
+      "Samples collected: (provided)",
     ].join("\n");
 
     const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {

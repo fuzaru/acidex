@@ -170,6 +170,8 @@ export default function ProfileScreen() {
     });
 
     await syncAllLocalUpdatesNow();
+    const refreshed = await loadSyncStatus();
+    setSyncStatus(refreshed);
   };
 
   const handleSwitchAccount = async () => {
@@ -228,8 +230,8 @@ export default function ProfileScreen() {
             <View style={styles.menuContent}>
               <MenuRow
                 icon="cafe-outline"
-                title="coffee preferences"
-                subtitle="presets, reminders, and accessibility"
+                title="preferences"
+                subtitle="presets and reminders"
                 onPress={() => setPreferencesModalVisible(true)}
               />
               <MenuRow
@@ -255,9 +257,13 @@ export default function ProfileScreen() {
                     ? `last synced ${new Date(syncStatus.lastSyncedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
                     : "all changes synced"
                 }
-                onPress={() => void handleSyncNow()}
                 trailing={
-                  <TouchableOpacity onPress={() => void handleSyncNow()} activeOpacity={0.8} style={styles.syncButton}>
+                  <TouchableOpacity
+                    onPress={() => void handleSyncNow()}
+                    activeOpacity={0.8}
+                    style={styles.syncButton}
+                    disabled={syncStatus.isSyncing}
+                  >
                     <ThemedText style={styles.syncButtonText}>
                       {syncStatus.isSyncing ? "syncing..." : "sync now"}
                     </ThemedText>
@@ -289,7 +295,7 @@ export default function ProfileScreen() {
           <Pressable style={styles.modalOverlay} onPress={() => setPreferencesModalVisible(false)}>
             <Pressable style={styles.preferencesModal} onPress={() => null}>
               <View style={styles.modalHeader}>
-                <ThemedText style={[styles.modalTitle, { color: text }]}>coffee preferences</ThemedText>
+                <ThemedText style={[styles.modalTitle, { color: text }]}>preferences</ThemedText>
                 <ThemedText style={styles.modalSubtitle}>
                   Automatic reminders stay on unless you turn them off.
                 </ThemedText>
@@ -328,36 +334,6 @@ export default function ProfileScreen() {
                     );
                   })}
                 </View>
-              </View>
-
-              <View style={styles.modalSection}>
-                <ThemedText style={styles.sectionLabel}>accessibility</ThemedText>
-                <MenuRow
-                  icon="contrast-outline"
-                  title="high contrast"
-                  subtitle="increase visibility across cards and charts"
-                  trailing={
-                    <Switch
-                      value={preferences.highContrastEnabled}
-                      onValueChange={(value) => updatePreferences({ highContrastEnabled: value })}
-                      trackColor={{ false: "#D1D5DB", true: "#6B7280" }}
-                      thumbColor={preferences.highContrastEnabled ? "#F5F5F5" : "#FFFFFF"}
-                    />
-                  }
-                />
-                <MenuRow
-                  icon="text-outline"
-                  title="large text"
-                  subtitle="make the reading view easier to scan"
-                  trailing={
-                    <Switch
-                      value={preferences.largeTextEnabled}
-                      onValueChange={(value) => updatePreferences({ largeTextEnabled: value })}
-                      trackColor={{ false: "#D1D5DB", true: "#6B7280" }}
-                      thumbColor={preferences.largeTextEnabled ? "#F5F5F5" : "#FFFFFF"}
-                    />
-                  }
-                />
               </View>
 
               <TouchableOpacity
